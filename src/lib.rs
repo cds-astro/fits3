@@ -25,6 +25,7 @@ mod math;
 mod texture;
 mod time;
 mod vertex;
+mod volumetric;
 use fitsrs::card::Value;
 use fitsrs::HDU;
 
@@ -33,7 +34,7 @@ use texture::Texture;
 use time::Clock;
 use vertex::Vertex;
 
-//use gui::EguiRenderer;
+use volumetric::VolumetricRenderer;
 
 use fitsrs::Fits;
 #[cfg(not(target_arch = "wasm32"))]
@@ -64,6 +65,7 @@ const MINMAX: &[Range<f32>] = &[
     0.0..1.0,
 ];
 
+use std::collections::HashMap;
 struct State {
     surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
@@ -78,118 +80,14 @@ struct State {
     
     is_surface_configured: bool,
 
-    // The window must be declared after the surface so
-    // it gets dropped after it as the surface contains
-    // unsafe references to the window's resources.
-    //window: &'a Window,
-    render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-
-    texture_bind_group_layout: wgpu::BindGroupLayout,
-    diffuse_bind_group: wgpu::BindGroup,
+    volumetric_renderer: VolumetricRenderer,
 
     // uniforms
-    rot_mat_buf: wgpu::Buffer,
-    window_size_buf: wgpu::Buffer,
-    time_buf: wgpu::Buffer,
-    cam_origin_buf: wgpu::Buffer,
-    cuts_buf: wgpu::Buffer,
-    perspective_buf: wgpu::Buffer,
-    minmax_buf: wgpu::Buffer,
+    buffers: HashMap<&'static str, wgpu::Buffer>,
 
     clock: Clock,
 
     egui_renderer: gui::EguiRenderer, //egui: EguiRenderer,
-}
-
-struct Cube<'a> {
-    data: &'a [u8],
-    dim: (u32, u32, u32),
-    datamin: Option<f32>,
-    datamax: Option<f32>,
-}
-
-fn parse_fits_data_cube<'a, R>(fits: &'a mut Fits<Cursor<R>>) -> Result<Cube<'a>, &'static str>
-where
-    R: AsRef<[u8]> + std::fmt::Debug + 'a,
-{
-    if let Some(Ok(hdu)) = fits.next() {
-        match hdu {
-            HDU::Primary(hdu) => {
-                let header = hdu.get_header();
-
-                if let (
-                    Some(Value::Integer { value: w, .. }),
-                    Some(Value::Integer { value: h, .. }),
-                    Some(Value::Integer { value: d, .. }),
-                ) = (
-                    header.get("NAXIS1"),
-                    header.get("NAXIS2"),
-                    header.get("NAXIS3"),
-                ) {
-                    let image = fits.get_data(&hdu);
-
-                    let d1 = *w as u32;
-                    let d2 = *h as u32;
-                    let mut d3 = *d as u32;
-
-                    if d3 == 1 {
-                        // parse NAXIS4 instead it there is
-                        if let Some(Value::Integer { value, .. }) = header.get("NAXIS4") {
-                            d3 = *value as u32;
-                        }
-                    }
-
-                    let data = image.raw_bytes();
-
-                    let datamin = if let Some(Value::Float { value, .. }) = header.get("DATAMIN") {
-                        Some(*value as f32)
-                    } else {
-                        None
-                    };
-                    let datamax = if let Some(Value::Float { value, .. }) = header.get("DATAMAX") {
-                        Some(*value as f32)
-                    } else {
-                        None
-                    };
-
-                    Ok(Cube {
-                        data,
-                        dim: (d1, d2, d3),
-                        datamin,
-                        datamax,
-                    })
-                } else {
-                    Err("FITS image extension not found")
-                }
-            }
-            _ => Err("FITS image extension not found"),
-        }
-    } else {
-        Err("Is not a FITS file")
-    }
-}
-
-use std::fmt::Debug;
-fn read_fits<R: AsRef<[u8]> + Debug>(
-    reader: Cursor<R>,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> Result<(Texture, Option<f32>, Option<f32>), &'static str> {
-    let mut fits = Fits::from_reader(reader);
-    let Cube {
-        data: raw_bytes,
-        dim,
-        datamin,
-        datamax,
-    } = parse_fits_data_cube(&mut fits)?;
-
-    Ok((
-        Texture::from_raw_bytes::<f32>(&device, &queue, Some(raw_bytes), dim, 4, "cube")?,
-        datamin,
-        datamax,
-    ))
 }
 
 use crate::math::Mat4;
@@ -253,351 +151,61 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
-        let cube =
-            Texture::from_raw_bytes::<f32>(&device, &queue, None, (1, 1, 1), 4, "cube").unwrap();
-        //let cube = load_fits_cube_file(&CUBES_PATH[0], &device, &queue);
+        let buffers: HashMap<&'static str, wgpu::Buffer> = vec![
+            ("rotmat", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rot matrix uniform"),
+                size: 64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
+            ("time", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("time in secs since starting"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
+            ("perspective", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("perspective"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
+            ("minmax", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("minmax"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
+            ("cam_origin", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Cam origin"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
+            ("cuts", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Cuts"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
+            ("window_size", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("window size uniform"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }))
+        ].into_iter().collect();
 
         // Uniform buffer
-        let rot_mat_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rot matrix uniform"),
-            size: 64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let time_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("time in secs since starting"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let perspective_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("perspective"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let minmax_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("minmax"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let cam_origin_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Cam origin"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let cuts_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Cuts"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let window_size_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("window size uniform"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D3,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                        count: None,
-                    },
-                    // rot matrix uniform
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<Mat4<f32>>() as _,
-                            ),
-                        },
-                        count: None,
-                    },
-                    // window size uniform
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                            ),
-                        },
-                        count: None,
-                    },
-                    // time uniform
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                            ),
-                        },
-                        count: None,
-                    },
-                    // cam origin uniform
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                            ),
-                        },
-                        count: None,
-                    },
-                    // cuts uniform
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 6,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                            ),
-                        },
-                        count: None,
-                    },
-                    // perspective uniform
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 7,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                            ),
-                        },
-                        count: None,
-                    },
-                    // minmax uniform
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 8,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                            ),
-                        },
-                        count: None,
-                    },
-                ],
-                label: Some("texture_bind_group_layout"),
-            });
-
-        let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&cube.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&cube.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &rot_mat_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Mat4<f32>>() as wgpu::BufferAddress
-                        ),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &window_size_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &time_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &cam_origin_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &cuts_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &perspective_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &minmax_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-            ],
-            label: Some("diffuse_bind_group"),
-        });
-
-        // uniform buffer
-        let vs_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cube vert shader"),
-            source: wgpu::ShaderSource::Glsl {
-                #[cfg(not(target_arch = "wasm32"))]
-                shader: std::str::from_utf8(&std::fs::read("src/shaders/cube.vert").unwrap())
-                    .unwrap()
-                    .into(),
-                #[cfg(target_arch = "wasm32")]
-                shader: include_str!("shaders/cube.vert").into(),
-                stage: wgpu::naga::ShaderStage::Vertex,
-                defines: Default::default(),
-            },
-        });
-        let fs_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cube frag shader"),
-            source: wgpu::ShaderSource::Glsl {
-                #[cfg(not(target_arch = "wasm32"))]
-                shader: std::str::from_utf8(&std::fs::read("src/shaders/cube.frag").unwrap())
-                    .unwrap()
-                    .into(),
-                #[cfg(target_arch = "wasm32")]
-                shader: include_str!("shaders/cube.frag").into(),
-                stage: wgpu::naga::ShaderStage::Fragment,
-                defines: Default::default(),
-            },
-        });
-
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&texture_bind_group_layout],
-                //immediate_size: 0,
-                push_constant_ranges: &[],
-            });
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &vs_shader,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                buffers: &[Vertex::desc()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &fs_shader,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
-                polygon_mode: wgpu::PolygonMode::Fill,
-                // Requires Features::DEPTH_CLIP_CONTROL
-                unclipped_depth: false,
-                // Requires Features::CONSERVATIVE_RASTERIZATION
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            //multiview_mask: None,
-            multiview: None,
-            cache: None, // 6.
-        });
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&[
-                Vertex { ndc: [-1.0, -1.0] },
-                Vertex { ndc: [1.0, -1.0] },
-                Vertex { ndc: [1.0, 1.0] },
-                Vertex { ndc: [-1.0, 1.0] },
-            ]),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&[0, 1, 2, 0, 2, 3]),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        //let num_indices = indices.len() as u32;
-
         // set the initial cut values
         queue.write_buffer(
-            &cuts_buf,
+            &buffers["cuts"],
             0,
             bytemuck::bytes_of(&[1.0 as f32, 0.0, 0.0, 0.0]),
         );
 
         queue.write_buffer(
-            &minmax_buf,
+            &buffers["minmax"],
             0,
             bytemuck::bytes_of(&[0.0_f32, 1.0, 0.0, 0.0]),
         );
@@ -656,6 +264,8 @@ impl State {
             closure.forget(); // prevent drop
         }
 
+        let volumetric_renderer = VolumetricRenderer::new(&device, &queue, &config, &buffers);
+
         Self {
             surface,
             device,
@@ -666,25 +276,15 @@ impl State {
             send_data,
             #[cfg(target_arch = "wasm32")]
             recv_data,
-            render_pipeline,
-            vertex_buffer,
-            index_buffer,
+
             is_surface_configured: false,
 
-            diffuse_bind_group,
-            texture_bind_group_layout,
-
             // uniforms
-            window_size_buf,
-            rot_mat_buf,
-            time_buf,
-            cam_origin_buf,
-            cuts_buf,
-            minmax_buf,
-            perspective_buf,
+            buffers,
 
             clock,
             egui_renderer,
+            volumetric_renderer,
         }
     }
 
@@ -707,7 +307,7 @@ impl State {
             self.is_surface_configured = true;
         }
         self.queue.write_buffer(
-            &self.window_size_buf,
+            &self.buffers["window_size"],
             0,
             bytemuck::bytes_of(&[self.size.width as f32, self.size.height as f32, 0.0, 0.0]),
         );
@@ -725,9 +325,9 @@ impl State {
         let rot: &[[f32; 4]; 4] = rot.as_ref();
 
         self.queue
-            .write_buffer(&self.rot_mat_buf, 0, bytemuck::bytes_of(rot));
+            .write_buffer(&self.buffers["rotmat"], 0, bytemuck::bytes_of(rot));
         self.queue.write_buffer(
-            &self.time_buf,
+            &self.buffers["time"],
             0,
             bytemuck::bytes_of(&[elapsed, 0.0, 0.0, 0.0]),
         );
@@ -755,36 +355,7 @@ impl State {
                     label: Some("Render Encoder"),
                 });
 
-            {
-                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Render Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.01,
-                                g: 0.01,
-                                b: 0.01,
-                                a: 1.0,
-                            }),
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                    //multiview_mask: None,
-                });
-
-                render_pass.set_pipeline(&self.render_pipeline);
-                render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..6, 0, 0..1);
-            }
+            self.volumetric_renderer.render_frame(&mut encoder, &view);
 
             {
                 self.egui_renderer.begin_frame(window);
@@ -849,91 +420,21 @@ impl State {
         // set the new datamin/datamax if there is some
         let datamin = min.or(datamin).unwrap_or(0.0);
         let datamax = max.or(datamax).unwrap_or(1.0);
+
         self.queue.write_buffer(
-            &self.minmax_buf,
+            &self.buffers["minmax"],
             0,
             bytemuck::bytes_of(&[datamin, datamax, 0.0_f32, 0.0_f32]),
         );
 
         // reset the cutoff values
         self.queue.write_buffer(
-            &self.cuts_buf,
+            &self.buffers["cuts"],
             0,
             bytemuck::bytes_of(&[1.0 as f32, 0.0, 0.0, 0.0]),
         );
 
-        self.diffuse_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&new_cube.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&new_cube.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.rot_mat_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Mat4<f32>>() as wgpu::BufferAddress
-                        ),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.window_size_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.time_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.cam_origin_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.cuts_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.perspective_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.minmax_buf,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-            ],
-            label: Some("diffuse_bind_group"),
-        });
+        self.volumetric_renderer.set_volume(&self.device, &self.buffers, new_cube);
 
         Ok(())
     }
@@ -1122,7 +623,7 @@ impl ApplicationHandler for App {
 
             if let Some(perspective) = perspective {
                 state.queue.write_buffer(
-                    &state.perspective_buf,
+                    &state.buffers["perspective"],
                     0,
                     bytemuck::bytes_of(&[
                         if perspective { 1.0_f32 } else { 0.0_f32 },
@@ -1135,7 +636,7 @@ impl ApplicationHandler for App {
 
             if let Some(minmax) = minmax {
                 state.queue.write_buffer(
-                    &state.minmax_buf,
+                    &state.buffers["minmax"],
                     0,
                     bytemuck::bytes_of(&[minmax.start, minmax.end, 0.0_f32, 0.0_f32]),
                 );
@@ -1278,7 +779,7 @@ impl ApplicationHandler for App {
                     );
 
                     state.queue.write_buffer(
-                        &state.cam_origin_buf,
+                        &state.buffers["cam_origin"],
                         0,
                         bytemuck::bytes_of(&[self.theta as f32 + self.dtheta as f32, d, 0.0, 0.0]),
                     );
@@ -1293,7 +794,7 @@ impl ApplicationHandler for App {
                     self.doffset = dx as f32;
 
                     state.queue.write_buffer(
-                        &state.cuts_buf,
+                        &state.buffers["cuts"],
                         0,
                         bytemuck::bytes_of(&[
                             self.scale * (1.0 + self.dscale),
@@ -1320,8 +821,6 @@ pub async fn run() {
 
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Wait);
-
-    //let window = create_window(&event_loop);
 
     let mut app = App::new();
     event_loop.run_app(&mut app).expect("Failed to run the app");
@@ -1355,4 +854,94 @@ fn create_window(event_loop: &ActiveEventLoop) -> Window {
     }
 
     event_loop.create_window(win_attrs).unwrap()
+}
+
+
+struct Cube<'a> {
+    data: &'a [u8],
+    dim: (u32, u32, u32),
+    datamin: Option<f32>,
+    datamax: Option<f32>,
+}
+
+fn parse_fits_data_cube<'a, R>(fits: &'a mut Fits<Cursor<R>>) -> Result<Cube<'a>, &'static str>
+where
+    R: AsRef<[u8]> + std::fmt::Debug + 'a,
+{
+    if let Some(Ok(hdu)) = fits.next() {
+        match hdu {
+            HDU::Primary(hdu) => {
+                let header = hdu.get_header();
+
+                if let (
+                    Some(Value::Integer { value: w, .. }),
+                    Some(Value::Integer { value: h, .. }),
+                    Some(Value::Integer { value: d, .. }),
+                ) = (
+                    header.get("NAXIS1"),
+                    header.get("NAXIS2"),
+                    header.get("NAXIS3"),
+                ) {
+                    let image = fits.get_data(&hdu);
+
+                    let d1 = *w as u32;
+                    let d2 = *h as u32;
+                    let mut d3 = *d as u32;
+
+                    if d3 == 1 {
+                        // parse NAXIS4 instead it there is
+                        if let Some(Value::Integer { value, .. }) = header.get("NAXIS4") {
+                            d3 = *value as u32;
+                        }
+                    }
+
+                    let data = image.raw_bytes();
+
+                    let datamin = if let Some(Value::Float { value, .. }) = header.get("DATAMIN") {
+                        Some(*value as f32)
+                    } else {
+                        None
+                    };
+                    let datamax = if let Some(Value::Float { value, .. }) = header.get("DATAMAX") {
+                        Some(*value as f32)
+                    } else {
+                        None
+                    };
+
+                    Ok(Cube {
+                        data,
+                        dim: (d1, d2, d3),
+                        datamin,
+                        datamax,
+                    })
+                } else {
+                    Err("FITS image extension not found")
+                }
+            }
+            _ => Err("FITS image extension not found"),
+        }
+    } else {
+        Err("Is not a FITS file")
+    }
+}
+
+use std::fmt::Debug;
+fn read_fits<R: AsRef<[u8]> + Debug>(
+    reader: Cursor<R>,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> Result<(Texture, Option<f32>, Option<f32>), &'static str> {
+    let mut fits = Fits::from_reader(reader);
+    let Cube {
+        data: raw_bytes,
+        dim,
+        datamin,
+        datamax,
+    } = parse_fits_data_cube(&mut fits)?;
+
+    Ok((
+        Texture::from_raw_bytes::<f32>(&device, &queue, Some(raw_bytes), dim, 4, "cube")?,
+        datamin,
+        datamax,
+    ))
 }
