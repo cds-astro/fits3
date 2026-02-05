@@ -61,6 +61,7 @@ impl Texture {
                 mag_filter: wgpu::FilterMode::Nearest,
                 min_filter: wgpu::FilterMode::Nearest,
                 mipmap_filter: wgpu::FilterMode::Nearest,
+                //mipmap_filter: wgpu::MipmapFilterMode::Nearest,
                 ..Default::default()
             });
 
@@ -94,7 +95,7 @@ impl Texture {
             depth_or_array_layers: dimensions.2,
         };
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d {
@@ -105,7 +106,7 @@ impl Texture {
                 aspect: wgpu::TextureAspect::All,
             },
             data,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some((self.num_bytes_per_pixel as u32) * dimensions.0),
                 rows_per_image: Some(dimensions.1),

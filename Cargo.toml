@@ -6,20 +6,23 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-winit = { version = "0.29", features = ["rwh_05"]}
+winit = { version = "0.30.12", features = ["rwh_05"]}
 env_logger = "0.10"
 log = "0.4"
 futures = "0.3"
 bytemuck = { version = "1.4", features = [ "derive" ] }
 cgmath = "0.18.0"
 byte-slice-cast = "1.0.0"
-wgpu = { version = "25.0.2", features = ["glsl"]}
+wgpu = { version = "27.0.1", features = ["glsl"]}
 pollster = "0.3"
-fitsrs = { path = "../fitsrs" }
+fitsrs = "0.3.4"
 memmap2 = "0.9.5"
-#egui-wgpu = "0.27.2"
-#egui-winit = "0.27.2"
-#egui = "0.27.2"
+egui = "0.33.3"
+# default-features set to false to bind egui with or winit
+egui-winit = { version = "0.33.3", default-features = false} 
+# and our wgpu
+egui-wgpu = { version = "0.33.3", default-features = false }
+
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -34,7 +37,7 @@ crate-type = ["cdylib", "rlib"]
 wasm-bindgen = "0.2.73" # remember to change version in wiki as well
 console_error_panic_hook = "0.1.6"
 console_log = "1.0"
-wgpu = { version = "25.0.2", features = ["webgl", "glsl"]}
+wgpu = { version = "27.0.1", features = ["webgl", "glsl"]}
 web-sys = { version = "0.3.77", features = [
     "Document",
     "Window",
@@ -49,9 +52,15 @@ web-sys = { version = "0.3.77", features = [
 ]}
 js-sys = "0.3.50"
 wasm-bindgen-futures = "0.4.30"
-getrandom = { version = "0.2", features = ["js"] }
+#getrandom = { version = "0.4.1", features = ["js"] }
+getrandom = { version = "0.3.3", features = ["wasm_js"] }
 async-channel = { version = "2.3.1" }
 lazy_static = "1.5.0"
+egui = "0.33.3"
+# default-features set to false to bind egui with or winit
+egui-winit = { version = "0.33.3", default-features = false} 
+# and our wgpu
+egui-wgpu = { version = "0.33.3", default-features = false }
 
 [profile.release]
 opt-level = 3

@@ -12,14 +12,13 @@ use std::iter;
 use std::path::Path;
 
 use wgpu::util::DeviceExt;
-use winit::dpi::PhysicalPosition;
-use winit::keyboard::KeyCode;
-use winit::keyboard::PhysicalKey;
-use winit::window::Fullscreen;
 use winit::{
+    application::ApplicationHandler,
+    dpi::PhysicalPosition,
     event::*,
-    event_loop::EventLoop,
-    window::{Window, WindowBuilder},
+    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
+    keyboard::{KeyCode, PhysicalKey},
+    window::{Fullscreen, Window, WindowId},
 };
 mod gui;
 mod math;
@@ -44,6 +43,8 @@ use std::fs::File;
 use std::io::Cursor;
 
 const CUBES_PATH: &[&'static str] = &[
+    "./cubes/cutout-CDS_P_LGLBSHI16.fits",
+    "./cubes/cutout-CDS_C_GALFAHI.fits",
     "./cubes/NGC3198_cube.fits",
     "./cubes/NGC7331_cube.fits",
     "./cubes/CO_21.fits",
@@ -53,6 +54,8 @@ const CUBES_PATH: &[&'static str] = &[
 ];
 
 const MINMAX: &[Range<f32>] = &[
+    0.0..1.0,
+    0.0..1.0,
     -2.451346722E-03..1.179221552E-02,
     -2.451346722E-03..1.179221552E-02,
     -2.451346722E-03..1.179221552E-02,
@@ -61,20 +64,24 @@ const MINMAX: &[Range<f32>] = &[
     0.0..1.0,
 ];
 
-struct State<'a> {
-    surface: wgpu::Surface<'a>,
+struct State {
+    surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
 
+    #[cfg(target_arch = "wasm32")]
+    send_data: async_channel::Sender<Vec<u8>>,
+    #[cfg(target_arch = "wasm32")]
+    recv_data: async_channel::Receiver<Vec<u8>>,
+    
     is_surface_configured: bool,
 
     // The window must be declared after the surface so
     // it gets dropped after it as the surface contains
     // unsafe references to the window's resources.
-    window: &'a Window,
-
+    //window: &'a Window,
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -93,11 +100,7 @@ struct State<'a> {
 
     clock: Clock,
 
-    i: usize,
-
-    scale: f32,
-    offset: f32,
-    //egui: EguiRenderer,
+    egui_renderer: gui::EguiRenderer, //egui: EguiRenderer,
 }
 
 struct Cube<'a> {
@@ -138,6 +141,8 @@ where
                         }
                     }
 
+                    let data = image.raw_bytes();
+
                     let datamin = if let Some(Value::Float { value, .. }) = header.get("DATAMIN") {
                         Some(*value as f32)
                     } else {
@@ -150,7 +155,7 @@ where
                     };
 
                     Ok(Cube {
-                        data: image.raw_bytes(),
+                        data,
                         dim: (d1, d2, d3),
                         datamin,
                         datamax,
@@ -188,21 +193,13 @@ fn read_fits<R: AsRef<[u8]> + Debug>(
 }
 
 use crate::math::Mat4;
-impl<'a> State<'a> {
-    async fn new(window: &'a Window) -> Self {
+impl State {
+    async fn new(
+        window: &Window,
+        instance: &wgpu::Instance,
+        surface: wgpu::Surface<'static>,
+    ) -> Self {
         let size = window.inner_size();
-
-        // The instance is a handle to our GPU
-        // BackendBit::all => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            #[cfg(not(target_arch = "wasm32"))]
-            backends: wgpu::Backends::PRIMARY,
-            #[cfg(target_arch = "wasm32")]
-            backends: wgpu::Backends::GL,
-            ..Default::default()
-        });
-
-        let surface = instance.create_surface(window).unwrap();
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -230,6 +227,7 @@ impl<'a> State<'a> {
                 },
                 label: None,
                 trace: wgpu::Trace::Off,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
             })
             .await
             .unwrap();
@@ -528,6 +526,7 @@ impl<'a> State<'a> {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[&texture_bind_group_layout],
+                //immediate_size: 0,
                 push_constant_ranges: &[],
             });
 
@@ -568,8 +567,9 @@ impl<'a> State<'a> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None, // 5.
-            cache: None,     // 6.
+            //multiview_mask: None,
+            multiview: None,
+            cache: None, // 6.
         });
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -604,13 +604,57 @@ impl<'a> State<'a> {
 
         let clock = Clock::now();
 
-        /*let mut egui = EguiRenderer::new(
-            &device,       // wgpu Device
-            config.format, // TextureFormat
-            None,          // this can be None
-            1,             // samples
-            window,        // winit Window
-        );*/
+        // Egui renderer init
+        let mut egui_renderer = gui::EguiRenderer::new(&device, config.format, None, 1, window);
+
+        // Transfer local data for wasm
+        #[cfg(target_arch = "wasm32")]
+        let (send_data, recv_data) = async_channel::unbounded::<Vec<u8>>();
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            // File reading
+            let document = web_sys::window().unwrap().document().unwrap();
+            let input = document
+                .get_element_by_id("file-input")
+                .unwrap()
+                .dyn_into::<web_sys::HtmlInputElement>()
+                .unwrap();
+
+            let input_cloned = input.clone();
+            let sdd = send_data.clone();
+            let closure = Closure::wrap(Box::new(move |_: web_sys::Event| {
+                if let Some(file_list) = input_cloned.files() {
+                    if let Some(file) = file_list.get(0) {
+                        let reader = web_sys::FileReader::new().unwrap();
+
+                        let reader_cloned = reader.clone();
+                        let sd = sdd.clone();
+                        let onloadend_cb = Closure::wrap(Box::new(move |_: web_sys::Event| {
+                            let result = reader_cloned.result().unwrap();
+                            let array = js_sys::Uint8Array::new(&result);
+                            let len = array.length() as usize;
+                            let sd3 = sd.clone();
+
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let mut data = array.to_vec();
+                                sd3.send(data).await.unwrap();
+                            });
+
+                            // Here you can use `data` (Vec<u8>) as you like.
+                            web_sys::console::log_1(&format!("Read {} bytes from file", len).into());
+                        }) as Box<dyn FnMut(_)>);
+
+                        reader.set_onloadend(Some(onloadend_cb.as_ref().unchecked_ref()));
+                        reader.read_as_array_buffer(&file).unwrap();
+                        onloadend_cb.forget(); // prevent drop
+                    }
+                }
+            }) as Box<dyn FnMut(_)>);
+
+            input.set_onchange(Some(closure.as_ref().unchecked_ref()));
+            closure.forget(); // prevent drop
+        }
 
         Self {
             surface,
@@ -618,7 +662,10 @@ impl<'a> State<'a> {
             queue,
             config,
             size,
-            window,
+            #[cfg(target_arch = "wasm32")]
+            send_data,
+            #[cfg(target_arch = "wasm32")]
+            recv_data,
             render_pipeline,
             vertex_buffer,
             index_buffer,
@@ -637,11 +684,7 @@ impl<'a> State<'a> {
             perspective_buf,
 
             clock,
-            //egui,
-            i: 0,
-
-            scale: 1.0,
-            offset: 0.0,
+            egui_renderer,
         }
     }
 
@@ -690,8 +733,8 @@ impl<'a> State<'a> {
         );
     }
 
-    fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let size = self.window.inner_size();
+    fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
+        let size = window.inner_size();
         if size.width == 0 || size.height == 0 {
             return Ok(());
         }
@@ -727,10 +770,12 @@ impl<'a> State<'a> {
                             }),
                             store: wgpu::StoreOp::Store,
                         },
+                        depth_slice: None,
                     })],
                     depth_stencil_attachment: None,
                     occlusion_query_set: None,
                     timestamp_writes: None,
+                    //multiview_mask: None,
                 });
 
                 render_pass.set_pipeline(&self.render_pipeline);
@@ -739,6 +784,50 @@ impl<'a> State<'a> {
                 render_pass
                     .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..6, 0, 0..1);
+            }
+
+            {
+                self.egui_renderer.begin_frame(window);
+
+                egui::Window::new("winit + egui + wgpu says hello!")
+                    .resizable(true)
+                    .vscroll(true)
+                    .default_open(false)
+                    .show(self.egui_renderer.context(), |ui| {
+                        ui.label("Label!");
+
+                        if ui.button("Button!").clicked() {
+                            println!("boom!")
+                        }
+
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label(format!(
+                                "Pixels per point: {}",
+                                self.egui_renderer.context().pixels_per_point()
+                            ));
+                            if ui.button("-").clicked() {
+                                //state.scale_factor = (state.scale_factor - 0.1).max(0.3);
+                            }
+                            if ui.button("+").clicked() {
+                                //state.scale_factor = (state.scale_factor + 0.1).min(3.0);
+                            }
+                        });
+                    });
+
+                let screen_descriptor = egui_wgpu::ScreenDescriptor {
+                    size_in_pixels: [self.config.width, self.config.height],
+                    pixels_per_point: window.scale_factor() as f32,
+                };
+
+                self.egui_renderer.end_frame_and_draw(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    window,
+                    &view,
+                    screen_descriptor,
+                );
             }
 
             self.queue.submit(iter::once(encoder.finish()));
@@ -772,9 +861,6 @@ impl<'a> State<'a> {
             0,
             bytemuck::bytes_of(&[1.0 as f32, 0.0, 0.0, 0.0]),
         );
-
-        self.scale = 1.0;
-        self.offset = 0.0;
 
         self.diffuse_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &self.texture_bind_group_layout,
@@ -858,6 +944,7 @@ use std::ops::Range;
 struct Params {
     perspective: Option<bool>,
     minmax: Option<Range<f32>>,
+    data: Option<Vec<u8>>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -873,6 +960,7 @@ lazy_static! {
 static mut PARAMS: Params = Params {
     perspective: None,
     minmax: None,
+    data: None,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -904,95 +992,161 @@ pub fn normalize(min: f32, max: f32) {
     });
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
-pub async fn run() {
-    #[cfg(target_arch = "wasm32")]
-    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-    #[cfg(target_arch = "wasm32")]
-    console_log::init_with_level(log::Level::Warn).expect("Couldn't initialize logger");
-    #[cfg(not(target_arch = "wasm32"))]
-    env_logger::init();
-
-    #[cfg(target_arch = "wasm32")]
-    let (send_data, recv_data) = async_channel::unbounded::<Vec<u8>>();
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        // File reading
-        let document = web_sys::window().unwrap().document().unwrap();
-        let input = document
-            .get_element_by_id("file-input")
-            .unwrap()
-            .dyn_into::<web_sys::HtmlInputElement>()
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = "displayFITS")]
+pub fn display(raw_bytes: js_sys::Uint8Array) {
+    wasm_bindgen_futures::spawn_local(async move {
+        CHANNEL_PARAMS
+            .0
+            .send(Params {
+                data: Some(raw_bytes.to_vec()),
+                ..Default::default()
+            })
+            .await
             .unwrap();
+    });
+}
 
-        let input_cloned = input.clone();
-        let closure = Closure::wrap(Box::new(move |_: web_sys::Event| {
-            if let Some(file_list) = input_cloned.files() {
-                if let Some(file) = file_list.get(0) {
-                    let reader = web_sys::FileReader::new().unwrap();
+use std::sync::Arc;
+pub struct App {
+    instance: wgpu::Instance,
+    state: Option<State>,
+    window: Option<Arc<Window>>,
 
-                    let reader_cloned = reader.clone();
-                    let sd = send_data.clone();
-                    let onloadend_cb = Closure::wrap(Box::new(move |_: web_sys::Event| {
-                        let result = reader_cloned.result().unwrap();
-                        let array = js_sys::Uint8Array::new(&result);
-                        let len = array.length() as usize;
-                        let sd3 = sd.clone();
+    panning: bool,
+    cuts: bool,
+    cursor_pos: PhysicalPosition<f64>,
+    start_cursor_pos: PhysicalPosition<f64>,
+    delta: f64,
+    theta: f64,
+    dtheta: f64,
+    ddelta: f64,
+    dscale: f32,
+    doffset: f32,
+    scale: f32,
+    offset: f32,
 
-                        wasm_bindgen_futures::spawn_local(async move {
-                            let mut data = array.to_vec();
-                            sd3.send(data).await.unwrap();
-                        });
+    i: usize,
+}
 
-                        // Here you can use `data` (Vec<u8>) as you like.
-                        web_sys::console::log_1(&format!("Read {} bytes from file", len).into());
-                    }) as Box<dyn FnMut(_)>);
-
-                    reader.set_onloadend(Some(onloadend_cb.as_ref().unchecked_ref()));
-                    reader.read_as_array_buffer(&file).unwrap();
-                    onloadend_cb.forget(); // prevent drop
-                }
-            }
-        }) as Box<dyn FnMut(_)>);
-
-        input.set_onchange(Some(closure.as_ref().unchecked_ref()));
-        closure.forget(); // prevent drop
-    }
-
-    let event_loop = EventLoop::new().unwrap();
-    let window = create_window(&event_loop);
-    let mut state = State::new(&window).await;
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let file = File::open(&CUBES_PATH[0]).unwrap();
-        let mmap = unsafe { Mmap::map(&file).unwrap() };
-
-        let reader = Cursor::new(mmap);
-        let _ = state.visualize_cube(reader, None, None);
-    }
-
-    //setup_event_loop(state, event_loop);
-    let mut panning = false;
-    let mut cuts = false;
-    let mut cursor_pos = PhysicalPosition::new(0.0, 0.0);
-    let mut start_cursor_pos = PhysicalPosition::new(0.0, 0.0);
-
-    // move variable
-    let mut delta = 0.0;
-    let mut theta = 0.0;
-    let mut dtheta = 0.0;
-    let mut ddelta: f64 = 0.0;
-
-    // cuts
-    let mut dscale = 0.0;
-    let mut doffset = 0.0;
-    event_loop.set_control_flow(ControlFlow::Wait);
-    event_loop
-        .run(move |event, control_flow| {
+impl App {
+    pub fn new() -> Self {
+        // The instance is a handle to our GPU
+        // BackendBit::all => Vulkan + Metal + DX12 + Browser WebGPU
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            #[cfg(not(target_arch = "wasm32"))]
+            backends: wgpu::Backends::PRIMARY,
             #[cfg(target_arch = "wasm32")]
-            if let Ok(data) = recv_data.try_recv() {
+            backends: wgpu::Backends::GL,
+            ..Default::default()
+        });
+
+        Self {
+            instance,
+            state: None,
+            window: None,
+            panning: false,
+            cuts: false,
+            cursor_pos: PhysicalPosition::new(0.0, 0.0),
+            start_cursor_pos: PhysicalPosition::new(0.0, 0.0),
+            delta: 0.0,
+            theta: 0.0,
+            dtheta: 0.0,
+            ddelta: 0.0,
+            dscale: 0.0,
+            doffset: 0.0,
+
+            scale: 1.0,
+            offset: 0.0,
+            i: 0,
+        }
+    }
+
+    async fn set_window(&mut self, window: Window) {
+        let window = Arc::new(window);
+        //let initial_width = 1360;
+        //let initial_height = 768;
+        //let _ = window.request_inner_size(PhysicalSize::new(initial_width, initial_height));
+        let surface = self
+            .instance
+            .create_surface(window.clone())
+            .expect("Failed to created the wgpu surface.");
+
+        let mut state = State::new(
+            &window,
+            &self.instance,
+            surface,
+            //initial_width,
+            //initial_width,
+        )
+        .await;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let file = File::open(&CUBES_PATH[0]).unwrap();
+            let mmap = unsafe { Mmap::map(&file).unwrap() };
+
+            let reader = Cursor::new(mmap);
+            let _ = state.visualize_cube(reader, None, None);
+        }
+
+        self.window.get_or_insert(window);
+        self.state.get_or_insert(state);
+    }
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let window = create_window(event_loop);
+        pollster::block_on(self.set_window(window));
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        let state = self.state
+            .as_mut()
+            .unwrap();
+        #[cfg(target_arch = "wasm32")]
+        if let Ok(data) = state.recv_data.try_recv() {
+            let reader = Cursor::new(data.as_slice());
+            match state.visualize_cube(reader, None, None) {
+                Ok(()) => {}
+                Err(error) => web_sys::window()
+                    .unwrap()
+                    .alert_with_message(error)
+                    .unwrap(),
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        if let Ok(params) = CHANNEL_PARAMS.1.try_recv() {
+            let Params {
+                perspective,
+                minmax,
+                data,
+            } = params;
+
+            if let Some(perspective) = perspective {
+                state.queue.write_buffer(
+                    &state.perspective_buf,
+                    0,
+                    bytemuck::bytes_of(&[
+                        if perspective { 1.0_f32 } else { 0.0_f32 },
+                        0.0_f32,
+                        0.0_f32,
+                        0.0_f32,
+                    ]),
+                );
+            }
+
+            if let Some(minmax) = minmax {
+                state.queue.write_buffer(
+                    &state.minmax_buf,
+                    0,
+                    bytemuck::bytes_of(&[minmax.start, minmax.end, 0.0_f32, 0.0_f32]),
+                );
+            }
+
+            if let Some(data) = data {
                 let reader = Cursor::new(data.as_slice());
                 match state.visualize_cube(reader, None, None) {
                     Ok(()) => {}
@@ -1002,229 +1156,189 @@ pub async fn run() {
                         .unwrap(),
                 }
             }
+        }
 
-            #[cfg(target_arch = "wasm32")]
-            if let Ok(params) = CHANNEL_PARAMS.1.try_recv() {
-                let Params {
-                    perspective,
-                    minmax,
-                    ..
-                } = params;
+        // let egui render to process the event first
+        state
+            .egui_renderer
+            .handle_input(self.window.as_ref().unwrap(), &event);
+        
+        match event {
+            #[cfg(not(target_arch = "wasm32"))]
+            WindowEvent::CloseRequested
+            | WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::Escape),
+                        ..
+                    },
+                ..
+            } => event_loop.exit(),
+            #[cfg(not(target_arch = "wasm32"))]
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::KeyA),
+                        ..
+                    },
+                ..
+            } => {
+                // toggle fullscreen
+                self.i = (self.i + 1) % CUBES_PATH.len();
 
-                if let Some(perspective) = perspective {
+                let file = File::open(&CUBES_PATH[self.i]).unwrap();
+                let mmap = unsafe { Mmap::map(&file).unwrap() };
+
+                let reader = Cursor::new(mmap);
+
+                let minmax = &MINMAX[self.i];
+                let _ = state
+                    .visualize_cube(reader, Some(minmax.start), Some(minmax.end));
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::Enter),
+                        ..
+                    },
+                ..
+            } => {
+                // toggle fullscreen
+                self.window
+                    .as_ref()
+                    .unwrap()
+                    .set_fullscreen(Some(Fullscreen::Borderless(None)));
+            }
+            WindowEvent::Resized(physical_size) => state.resize(physical_size),
+            WindowEvent::RedrawRequested => {
+                state.update();
+                let window = self.window.as_ref().unwrap();
+                let _ = state.render(window);
+
+                window.request_redraw();
+            }
+            // Moving
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                self.panning = true;
+                self.start_cursor_pos = self.cursor_pos;
+                self.dtheta = 0.0;
+                self.ddelta = 0.0;
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } => {
+                self.panning = false;
+                self.theta += self.dtheta;
+                self.delta += self.ddelta;
+
+                self.delta = self.delta.clamp(
+                    -std::f64::consts::PI * 0.5 + 1e-3,
+                    std::f64::consts::PI * 0.5 - 1e-3,
+                );
+            }
+            // Change cuts
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                ..
+            } => {
+                self.cuts = true;
+                self.start_cursor_pos = self.cursor_pos;
+                self.dscale = 0.0;
+                self.doffset = 0.0;
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Right,
+                ..
+            } => {
+                self.cuts = false;
+                self.scale = self.scale * (1.0 + self.dscale);
+                self.offset = self.offset * (1.0 + self.doffset);
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_pos = position;
+
+                if self.panning {
+                    let dx = (self.cursor_pos.x - self.start_cursor_pos.x)
+                        / ((state.size.width as f64) * 0.5);
+                    let dy = (self.cursor_pos.y - self.start_cursor_pos.y)
+                        / ((state.size.height as f64) * 0.5);
+
+                    self.dtheta = 2.0 * dx;
+                    self.ddelta = dy;
+
+                    let d = (self.delta as f32 + self.ddelta as f32).clamp(
+                        -std::f32::consts::PI * 0.5 + 1e-3,
+                        std::f32::consts::PI * 0.5 - 1e-3,
+                    );
+
                     state.queue.write_buffer(
-                        &state.perspective_buf,
+                        &state.cam_origin_buf,
+                        0,
+                        bytemuck::bytes_of(&[self.theta as f32 + self.dtheta as f32, d, 0.0, 0.0]),
+                    );
+                } else if self.cuts {
+                    let dx =
+                        (self.cursor_pos.x - self.start_cursor_pos.x) / ((state.size.width as f64) * 0.5);
+                    let dy =
+                        (self.cursor_pos.y - self.start_cursor_pos.y) / ((state.size.height as f64) * 0.5);
+
+                    // between 0 and 1
+                    self.dscale = dy as f32;
+                    self.doffset = dx as f32;
+
+                    state.queue.write_buffer(
+                        &state.cuts_buf,
                         0,
                         bytemuck::bytes_of(&[
-                            if perspective { 1.0_f32 } else { 0.0_f32 },
-                            0.0_f32,
-                            0.0_f32,
-                            0.0_f32,
+                            self.scale * (1.0 + self.dscale),
+                            self.offset * (1.0 + self.doffset),
+                            0.0,
+                            0.0,
                         ]),
                     );
                 }
-
-                if let Some(minmax) = minmax {
-                    state.queue.write_buffer(
-                        &state.minmax_buf,
-                        0,
-                        bytemuck::bytes_of(&[minmax.start, minmax.end, 0.0_f32, 0.0_f32]),
-                    );
-                }
             }
-
-            match event {
-                Event::WindowEvent {
-                    ref event,
-                    window_id,
-                } if window_id == state.window.id() => {
-                    if !state.input(event) {
-                        match event {
-                            #[cfg(not(target_arch = "wasm32"))]
-                            WindowEvent::CloseRequested
-                            | WindowEvent::KeyboardInput {
-                                event:
-                                    KeyEvent {
-                                        state: ElementState::Pressed,
-                                        physical_key: PhysicalKey::Code(KeyCode::Escape),
-                                        ..
-                                    },
-                                ..
-                            } => control_flow.exit(),
-                            #[cfg(not(target_arch = "wasm32"))]
-                            WindowEvent::KeyboardInput {
-                                event:
-                                    KeyEvent {
-                                        state: ElementState::Pressed,
-                                        physical_key: PhysicalKey::Code(KeyCode::KeyA),
-                                        ..
-                                    },
-                                ..
-                            } => {
-                                // toggle fullscreen
-                                state.i = (state.i + 1) % CUBES_PATH.len();
-
-                                let file = File::open(&CUBES_PATH[state.i]).unwrap();
-                                let mmap = unsafe { Mmap::map(&file).unwrap() };
-
-                                let reader = Cursor::new(mmap);
-
-                                let minmax = &MINMAX[state.i];
-                                let _ = state.visualize_cube(
-                                    reader,
-                                    Some(minmax.start),
-                                    Some(minmax.end),
-                                );
-                            }
-                            WindowEvent::KeyboardInput {
-                                event:
-                                    KeyEvent {
-                                        state: ElementState::Pressed,
-                                        physical_key: PhysicalKey::Code(KeyCode::Enter),
-                                        ..
-                                    },
-                                ..
-                            } => {
-                                // toggle fullscreen
-                                state
-                                    .window
-                                    .set_fullscreen(Some(Fullscreen::Borderless(None)));
-                            }
-                            WindowEvent::Resized(physical_size) => state.resize(*physical_size),
-                            WindowEvent::RedrawRequested => {
-                                state.update();
-                                match state.render() {
-                                    Ok(_) => {}
-                                    // Reconfigure the surface if lost
-                                    Err(wgpu::SurfaceError::Lost) => {
-                                        let size = state.size;
-                                        state.resize(size)
-                                    }
-                                    // The system is out of memory, we should probably quit
-                                    Err(wgpu::SurfaceError::OutOfMemory) => control_flow.exit(),
-                                    // All other errors (Outdated, Timeout) should be resolved by the next frame
-                                    Err(e) => {
-                                        eprintln!("{}", e);
-                                    }
-                                }
-                            }
-                            // Moving
-                            WindowEvent::MouseInput {
-                                state: ElementState::Pressed,
-                                button: MouseButton::Left,
-                                ..
-                            } => {
-                                panning = true;
-                                start_cursor_pos = cursor_pos;
-                                dtheta = 0.0;
-                                ddelta = 0.0;
-                            }
-                            WindowEvent::MouseInput {
-                                state: ElementState::Released,
-                                button: MouseButton::Left,
-                                ..
-                            } => {
-                                panning = false;
-                                theta += dtheta;
-                                delta += ddelta;
-
-                                delta = delta.clamp(
-                                    -std::f64::consts::PI * 0.5 + 1e-3,
-                                    std::f64::consts::PI * 0.5 - 1e-3,
-                                );
-                            }
-                            // Change cuts
-                            WindowEvent::MouseInput {
-                                state: ElementState::Pressed,
-                                button: MouseButton::Right,
-                                ..
-                            } => {
-                                cuts = true;
-                                start_cursor_pos = cursor_pos;
-                                dscale = 0.0;
-                                doffset = 0.0;
-                            }
-                            WindowEvent::MouseInput {
-                                state: ElementState::Released,
-                                button: MouseButton::Right,
-                                ..
-                            } => {
-                                cuts = false;
-                                state.scale = state.scale * (1.0 + dscale);
-                                state.offset = state.offset * (1.0 + doffset);
-                            }
-                            WindowEvent::CursorMoved { position, .. } => {
-                                cursor_pos = *position;
-
-                                if panning {
-                                    let dx = (cursor_pos.x - start_cursor_pos.x)
-                                        / ((state.size.width as f64) * 0.5);
-                                    let dy = (cursor_pos.y - start_cursor_pos.y)
-                                        / ((state.size.height as f64) * 0.5);
-
-                                    dtheta = 2.0 * dx;
-                                    ddelta = dy;
-
-                                    let d = (delta as f32 + ddelta as f32).clamp(
-                                        -std::f32::consts::PI * 0.5 + 1e-3,
-                                        std::f32::consts::PI * 0.5 - 1e-3,
-                                    );
-
-                                    state.queue.write_buffer(
-                                        &state.cam_origin_buf,
-                                        0,
-                                        bytemuck::bytes_of(&[
-                                            theta as f32 + dtheta as f32,
-                                            d,
-                                            0.0,
-                                            0.0,
-                                        ]),
-                                    );
-                                } else if cuts {
-                                    let dx = (cursor_pos.x - start_cursor_pos.x)
-                                        / ((state.size.width as f64) * 0.5);
-                                    let dy = (cursor_pos.y - start_cursor_pos.y)
-                                        / ((state.size.height as f64) * 0.5);
-
-                                    // between 0 and 1
-                                    dscale = dy as f32;
-                                    doffset = dx as f32;
-
-                                    state.queue.write_buffer(
-                                        &state.cuts_buf,
-                                        0,
-                                        bytemuck::bytes_of(&[
-                                            state.scale * (1.0 + dscale),
-                                            state.offset * (1.0 + doffset),
-                                            0.0,
-                                            0.0,
-                                        ]),
-                                    );
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                // ... at the end of the WindowEvent block
-                Event::AboutToWait => {
-                    // RedrawRequested will only trigger once unless we manually
-                    // request it.
-                    state.window.request_redraw();
-                }
-                _ => {}
-            }
-        })
-        .unwrap();
+            _ => {}
+        }
+    }
 }
 
-fn create_window(event_loop: &EventLoop<()>) -> Window {
-    let mut builder = WindowBuilder::new();
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
+pub async fn run() {
+    #[cfg(target_arch = "wasm32")]
+    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+    #[cfg(target_arch = "wasm32")]
+    console_log::init_with_level(log::Level::Warn).expect("Couldn't initialize logger");
+    #[cfg(not(target_arch = "wasm32"))]
+    env_logger::init();
+
+    let event_loop = EventLoop::new().unwrap();
+    event_loop.set_control_flow(ControlFlow::Wait);
+
+    //let window = create_window(&event_loop);
+
+    let mut app = App::new();
+    event_loop.run_app(&mut app).expect("Failed to run the app");
+}
+
+fn create_window(event_loop: &ActiveEventLoop) -> Window {
+    let mut win_attrs = Window::default_attributes().with_title("Astronomical cube visualizer");
 
     #[cfg(target_arch = "wasm32")]
     {
         use wasm_bindgen::JsCast;
-        use winit::platform::web::WindowBuilderExtWebSys;
+        use winit::platform::web::WindowAttributesExtWebSys;
         let canvas = web_sys::window()
             .unwrap()
             .document()
@@ -1234,13 +1348,8 @@ fn create_window(event_loop: &EventLoop<()>) -> Window {
             .dyn_into::<web_sys::HtmlCanvasElement>()
             .unwrap();
 
-        builder = builder.with_canvas(Some(canvas));
+        win_attrs = win_attrs.with_canvas(Some(canvas));
     }
-
-    let window = builder
-        .with_title("Astronomical cube visualizer")
-        .build(&event_loop)
-        .unwrap();
 
     // Winit prevents sizing with CSS, so we have to set
     // the size manually when on web.
@@ -1250,5 +1359,5 @@ fn create_window(event_loop: &EventLoop<()>) -> Window {
         //let _ = window.request_inner_size(LogicalSize::new(768, 512));
     }
 
-    window
+    event_loop.create_window(win_attrs).unwrap()
 }

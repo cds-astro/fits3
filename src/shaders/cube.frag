@@ -142,6 +142,10 @@ float asinhStretch(float x, float scale, float nonlinearity) {
     return asinh(scale * x) / asinh(scale * nonlinearity);
 }
 
+bool is_finite_f32(float x) {
+    return abs(x) <= 3.402823e38;
+}
+
 const float fov = 0.523333;
 const float camera_near = 1.0;
 //const float dmin = -2.451346722E-03;
@@ -208,7 +212,10 @@ void main() {
     // scaled to the origin of the cube
     vec3 p = p_cam + r * t_s - l;
     for (int i = 0; i < num_sampling; i++) {
-        intensity += to_l_endian(texture(sampler3D(t_map, s_map), p).r);
+        float v = to_l_endian(texture(sampler3D(t_map, s_map), p).r);
+
+        // max suppress the NaNs, if v is NaN then we add 0.0
+        intensity += max(v, 0.0);
         /*alpha *= 0.97;
         if (alpha < 1e-3) {
             break;

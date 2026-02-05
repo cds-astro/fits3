@@ -91,6 +91,14 @@
             let max = +e.target.value
             fits3.normalize(min, max);
         });
+
+        // fetch a default cube
+        /*fetch("https://alasky.cds.unistra.fr/cubes-samples/DHIGLS_MC_Tb.fits")
+          .then((resp) => resp.arrayBuffer())
+          .then((buf) => {
+            fits3.displayFITS(new Uint8Array(buf))
+            fits3.normalize(0.0, 10.0)
+          })*/
     });
 
     fetch("https://alasky.cds.unistra.fr/cubes-samples/cubes-list.json")
