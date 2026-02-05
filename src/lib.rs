@@ -1064,9 +1064,6 @@ impl App {
 
     async fn set_window(&mut self, window: Window) {
         let window = Arc::new(window);
-        //let initial_width = 1360;
-        //let initial_height = 768;
-        //let _ = window.request_inner_size(PhysicalSize::new(initial_width, initial_height));
         let surface = self
             .instance
             .create_surface(window.clone())
@@ -1076,8 +1073,6 @@ impl App {
             &window,
             &self.instance,
             surface,
-            //initial_width,
-            //initial_width,
         )
         .await;
 
