@@ -155,7 +155,7 @@ const float camera_near = 1.0;
 const vec3 l = vec3(-0.5, -0.5, -0.5);
 const vec3 h = vec3(0.5, 0.5, 0.5);
 void main() {
-    vec3 cam_origin = 1.5 * lonlat2xyz(origin.x, origin.y);
+    vec3 cam_origin = lonlat2xyz(origin.x, origin.y);
 
     // vector from camera origin to the look
     vec3 cam_dir = normalize(-cam_origin);
@@ -222,8 +222,10 @@ void main() {
         }*/
         p += dr;
     }
+
     intensity /= num_sampling;
-    intensity = ((intensity - minmax.x) / (minmax.y - minmax.x)) * cut.x + cut.y;
+    intensity = clamp((intensity - cut.x) / (cut.y - cut.x), 0.0, 1.0);
+    //intensity = 1.0 - alpha;
 
     //intensity = asinhStretch(intensity, 2.0, 1.0);
 

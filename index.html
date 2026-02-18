@@ -16,18 +16,6 @@
             <ul>
                 <li>Save your numpy array to a FITS file by following this <a href="./convert_numpy2fits.py" target="_blank">python script</a></li>
                 <li>Your 3d array shape must be less than 512 in every dimension. Otherwise the browser may not support it</li>
-                <li>Example of cubes to load with recommanded min/max values to put in the text fields<table id="cube_samples">
-                  <thead>
-                    <tr>
-                      <th>Filename</th>
-                      <th>Min value</th>
-                      <th>Max value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <!-- Rows will be inserted here -->
-                  </tbody>
-                </table></li>
             </ul>
         </div>
         <div>Controls:
@@ -93,15 +81,15 @@
         });
 
         // fetch a default cube
-        /*fetch("https://alasky.cds.unistra.fr/cubes-samples/DHIGLS_MC_Tb.fits")
+        fetch("https://alasky.cds.unistra.fr/hips-cube-services/hips2fits3d?hips=CDS%2FP%2FLGLBSHI16&width=500&height=500&fov=4&projection=SIN&coordsys=icrs&object=M31&format=fits")
           .then((resp) => resp.arrayBuffer())
           .then((buf) => {
             fits3.displayFITS(new Uint8Array(buf))
-            fits3.normalize(0.0, 10.0)
-          })*/
+            fits3.normalize(0.0, 3.0)
+          })
     });
 
-    fetch("https://alasky.cds.unistra.fr/cubes-samples/cubes-list.json")
+    /*fetch("https://alasky.cds.unistra.fr/cubes-samples/cubes-list.json")
       .then((resp) => {
         console.log(resp)
         return resp.json()
@@ -125,7 +113,7 @@
 
           tbody.appendChild(row);
         })
-      })
+      })*/
   </script>
 </body>
 
@@ -134,7 +122,6 @@
 <style>
     /* scale the canvas to decrease its resolution */
     canvas {
-        transform: scale(1.3);
         padding-left: 0;
         padding-right: 0;
         margin-left: auto;

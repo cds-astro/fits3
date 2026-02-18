@@ -2,9 +2,44 @@ use wgpu::util::DeviceExt;
 use wgpu::TextureView;
 use crate::Mat4;
 use crate::Texture;
-use crate::VertexNDC;
+use crate::Vertex;
 use crate::Vec4;
-pub(crate) struct VolumetricRenderer {
+
+pub const CUBE_VERTICES: &[Vertex] = &[
+    // bottom face
+    Vertex { xyz: [-0.5, -0.5, -0.5] }, // 0
+    Vertex { xyz: [ 0.5, -0.5, -0.5] }, // 1
+    Vertex { xyz: [ 0.5, -0.5,  0.5] }, // 2
+    Vertex { xyz: [-0.5, -0.5,  0.5] }, // 3
+
+    // top face
+    Vertex { xyz: [-0.5,  0.5, -0.5] }, // 4
+    Vertex { xyz: [ 0.5,  0.5, -0.5] }, // 5
+    Vertex { xyz: [ 0.5,  0.5,  0.5] }, // 6
+    Vertex { xyz: [-0.5,  0.5,  0.5] }, // 7
+];
+
+pub const CUBE_LINE_INDICES: &[u16] = &[
+    // bottom square
+    0, 1,
+    1, 2,
+    2, 3,
+    3, 0,
+
+    // top square
+    4, 5,
+    5, 6,
+    6, 7,
+    7, 4,
+
+    // vertical edges
+    0, 4,
+    1, 5,
+    2, 6,
+    3, 7,
+];
+
+pub(crate) struct SelectorRenderer {
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -14,31 +49,15 @@ pub(crate) struct VolumetricRenderer {
 }
 
 use std::collections::HashMap;
-impl VolumetricRenderer {
+impl SelectorRenderer {
     pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue, config: &wgpu::SurfaceConfiguration, buffers: &HashMap<&'static str, wgpu::Buffer>) -> Self {
         let texture_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D3,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                    count: None,
-                },
                 // rot matrix uniform
                 wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -50,7 +69,7 @@ impl VolumetricRenderer {
                 },
                 // window size uniform
                 wgpu::BindGroupLayoutEntry {
-                    binding: 3,
+                    binding: 1,
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -63,8 +82,8 @@ impl VolumetricRenderer {
                 },
                 // time uniform
                 wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -76,21 +95,8 @@ impl VolumetricRenderer {
                 },
                 // cam origin uniform
                 wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // cuts uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -102,21 +108,8 @@ impl VolumetricRenderer {
                 },
                 // perspective uniform
                 wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // minmax uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -130,22 +123,11 @@ impl VolumetricRenderer {
             label: Some("texture_bind_group_layout"),
         });
 
-        let cube =
-            Texture::from_raw_bytes::<f32>(&device, &queue, None, (1, 1, 1), 4, "cube").unwrap();
-
         let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &texture_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&cube.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&cube.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["rotmat"],
                         offset: 0,
@@ -155,7 +137,7 @@ impl VolumetricRenderer {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 3,
+                    binding: 1,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["window_size"],
                         offset: 0,
@@ -163,7 +145,7 @@ impl VolumetricRenderer {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: 2,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["time"],
                         offset: 0,
@@ -171,7 +153,7 @@ impl VolumetricRenderer {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: 3,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["cam_origin"],
                         offset: 0,
@@ -179,25 +161,9 @@ impl VolumetricRenderer {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["cuts"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
+                    binding: 4,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["perspective"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["minmax"],
                         offset: 0,
                         size: wgpu::BufferSize::new(16),
                     }),
@@ -208,27 +174,27 @@ impl VolumetricRenderer {
 
         // uniform buffer
         let vs_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cube vert shader"),
+            label: Some("wireframe shader"),
             source: wgpu::ShaderSource::Glsl {
                 #[cfg(not(target_arch = "wasm32"))]
-                shader: std::str::from_utf8(&std::fs::read("src/shaders/cube.vert").unwrap())
+                shader: std::str::from_utf8(&std::fs::read("src/shaders/wireframe.vert").unwrap())
                     .unwrap()
                     .into(),
                 #[cfg(target_arch = "wasm32")]
-                shader: include_str!("shaders/cube.vert").into(),
+                shader: include_str!("shaders/wireframe.vert").into(),
                 stage: wgpu::naga::ShaderStage::Vertex,
                 defines: Default::default(),
             },
         });
         let fs_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cube frag shader"),
+            label: Some("wireframe shader"),
             source: wgpu::ShaderSource::Glsl {
                 #[cfg(not(target_arch = "wasm32"))]
-                shader: std::str::from_utf8(&std::fs::read("src/shaders/cube.frag").unwrap())
+                shader: std::str::from_utf8(&std::fs::read("src/shaders/wireframe.frag").unwrap())
                     .unwrap()
                     .into(),
                 #[cfg(target_arch = "wasm32")]
-                shader: include_str!("shaders/cube.frag").into(),
+                shader: include_str!("shaders/wireframe.frag").into(),
                 stage: wgpu::naga::ShaderStage::Fragment,
                 defines: Default::default(),
             },
@@ -249,7 +215,7 @@ impl VolumetricRenderer {
                 module: &vs_shader,
                 entry_point: Some("main"),
                 compilation_options: Default::default(),
-                buffers: &[VertexNDC::desc()],
+                buffers: &[Vertex::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &fs_shader,
@@ -262,10 +228,10 @@ impl VolumetricRenderer {
                 })],
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                topology: wgpu::PrimitiveTopology::LineList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
                 polygon_mode: wgpu::PolygonMode::Fill,
                 // Requires Features::DEPTH_CLIP_CONTROL
@@ -286,17 +252,12 @@ impl VolumetricRenderer {
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&[
-                VertexNDC { ndc: [-1.0, -1.0] },
-                VertexNDC { ndc: [1.0, -1.0] },
-                VertexNDC { ndc: [1.0, 1.0] },
-                VertexNDC { ndc: [-1.0, 1.0] },
-            ]),
+            contents: bytemuck::cast_slice(&CUBE_VERTICES),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&[0, 1, 2, 0, 2, 3]),
+            contents: bytemuck::cast_slice(&CUBE_LINE_INDICES),
             usage: wgpu::BufferUsages::INDEX,
         });
 
@@ -309,97 +270,18 @@ impl VolumetricRenderer {
         }
     }
 
-    pub(crate) fn set_volume(&mut self, device: &wgpu::Device, buffers: &HashMap<&'static str, wgpu::Buffer>, volume: Texture) {
-        self.diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&volume.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&volume.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["rotmat"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Mat4<f32>>() as wgpu::BufferAddress
-                        ),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["window_size"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["time"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["cam_origin"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["cuts"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["perspective"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["minmax"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-            ],
-            label: Some("diffuse_bind_group"),
-        });
-    }
-
     pub(crate) fn render_frame(&self, encoder: &mut wgpu::CommandEncoder, window_surface_view: &TextureView) {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
+            
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &window_surface_view,
+                view: window_surface_view,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.01,
-                        g: 0.01,
-                        b: 0.01,
-                        a: 1.0,
-                    }),
+                    load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 },
-                depth_slice: None,
             })],
             depth_stencil_attachment: None,
             occlusion_query_set: None,
@@ -411,7 +293,7 @@ impl VolumetricRenderer {
         render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass
-            .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.draw_indexed(0..6, 0, 0..1);
+            .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.draw_indexed(0..CUBE_LINE_INDICES.len() as u32, 0, 0..1);
     }
 }

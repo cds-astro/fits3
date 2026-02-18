@@ -29,7 +29,10 @@ impl EguiRenderer {
             egui_context,
             egui::viewport::ViewportId::ROOT,
             &window,
+            #[cfg(not(target_arch = "wasm32"))]
             Some(window.scale_factor() as f32),
+            #[cfg(target_arch = "wasm32")]
+            Some((window.scale_factor() as f32) * 0.75),
             None,
             Some(2 * 1024), // default dimension is 2048
         );
@@ -42,8 +45,8 @@ impl EguiRenderer {
         }
     }
 
-    pub fn handle_input(&mut self, window: &Window, event: &WindowEvent) {
-        let _ = self.state.on_window_event(window, event);
+    pub fn handle_input(&mut self, window: &Window, event: &WindowEvent) -> egui_winit::EventResponse {
+        self.state.on_window_event(window, event)
     }
 
     pub fn ppp(&mut self, v: f32) {
@@ -51,7 +54,22 @@ impl EguiRenderer {
     }
 
     pub fn begin_frame(&mut self, window: &Window) {
-        let raw_input = self.state.take_egui_input(window);
+        let mut raw_input = self.state.take_egui_input(window);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let scale = 0.75;
+
+            for event in &mut raw_input.events {
+                if let egui::Event::PointerMoved(pos) = event {
+                    *pos *= scale;
+                }
+
+                if let egui::Event::PointerButton { pos, .. } = event {
+                    *pos *= scale;
+                }
+            }
+        }
+        
         self.state.egui_ctx().begin_pass(raw_input);
         self.frame_started = true;
     }

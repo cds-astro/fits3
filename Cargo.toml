@@ -15,7 +15,7 @@ cgmath = "0.18.0"
 byte-slice-cast = "1.0.0"
 wgpu = { version = "27.0.1", features = ["glsl"]}
 pollster = "0.3"
-fitsrs = "0.3.4"
+fitsrs = "0.4.1"
 memmap2 = "0.9.5"
 egui = "0.33.3"
 # default-features set to false to bind egui with or winit

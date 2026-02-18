@@ -26,13 +26,15 @@ mod texture;
 mod time;
 mod vertex;
 mod volumetric;
+mod selector;
 use fitsrs::card::Value;
 use fitsrs::HDU;
 
 use crate::math::Vec4;
 use texture::Texture;
 use time::Clock;
-use vertex::Vertex;
+use vertex::{VertexNDC, Vertex};
+use crate::selector::SelectorRenderer;
 
 use volumetric::VolumetricRenderer;
 
@@ -81,11 +83,15 @@ struct State {
     is_surface_configured: bool,
 
     volumetric_renderer: VolumetricRenderer,
+    selector_renderer: SelectorRenderer,
 
     // uniforms
     buffers: HashMap<&'static str, wgpu::Buffer>,
 
     clock: Clock,
+
+    mincut: f32,
+    maxcut: f32,
 
     egui_renderer: gui::EguiRenderer, //egui: EguiRenderer,
 }
@@ -265,6 +271,7 @@ impl State {
         }
 
         let volumetric_renderer = VolumetricRenderer::new(&device, &queue, &config, &buffers);
+        let selector_renderer = SelectorRenderer::new(&device, &queue, &config, &buffers);
 
         Self {
             surface,
@@ -282,9 +289,13 @@ impl State {
             // uniforms
             buffers,
 
+            mincut: 0.0,
+            maxcut: 1.0,
+
             clock,
             egui_renderer,
             volumetric_renderer,
+            selector_renderer
         }
     }
 
@@ -292,6 +303,9 @@ impl State {
         if new_size.width > 0 && new_size.height > 0 {
             #[cfg(target_arch = "wasm32")]
             {
+                new_size.width = (new_size.width as f32 * 0.75_f32) as u32;
+                new_size.height = (new_size.height as f32 * 0.75_f32) as u32;
+
                 new_size.width = new_size
                     .width
                     .min(wgpu::Limits::downlevel_webgl2_defaults().max_texture_dimension_2d);
@@ -356,18 +370,19 @@ impl State {
                 });
 
             self.volumetric_renderer.render_frame(&mut encoder, &view);
+            self.selector_renderer.render_frame(&mut encoder, &view);
 
             {
                 self.egui_renderer.begin_frame(window);
 
-                egui::Window::new("winit + egui + wgpu says hello!")
+                egui::Window::new("fits3 cube viewer")
                     .resizable(true)
                     .vscroll(true)
                     .default_open(false)
                     .show(self.egui_renderer.context(), |ui| {
-                        ui.label("Label!");
+                        ui.label("This will host the UI of the viewer!");
 
-                        if ui.button("Button!").clicked() {
+                        /*if ui.button("Button!").clicked() {
                             println!("boom!")
                         }
 
@@ -383,12 +398,18 @@ impl State {
                             if ui.button("+").clicked() {
                                 //state.scale_factor = (state.scale_factor + 0.1).min(3.0);
                             }
-                        });
+                        });*/
                     });
 
+                #[cfg(not(target_arch = "wasm32"))]
                 let screen_descriptor = egui_wgpu::ScreenDescriptor {
                     size_in_pixels: [self.config.width, self.config.height],
                     pixels_per_point: window.scale_factor() as f32,
+                };
+                #[cfg(target_arch = "wasm32")]
+                let screen_descriptor = egui_wgpu::ScreenDescriptor {
+                    size_in_pixels: [self.config.width, self.config.height],
+                    pixels_per_point: (window.scale_factor() as f32) * 0.75_f32,
                 };
 
                 self.egui_renderer.end_frame_and_draw(
@@ -415,7 +436,7 @@ impl State {
         min: Option<f32>,
         max: Option<f32>,
     ) -> Result<(), &'static str> {
-        let (new_cube, datamin, datamax) = read_fits(reader, &self.device, &self.queue)?;
+        let (new_cube, datamin, datamax, mincut, maxcut) = read_fits(reader, &self.device, &self.queue)?;
 
         // set the new datamin/datamax if there is some
         let datamin = min.or(datamin).unwrap_or(0.0);
@@ -431,8 +452,11 @@ impl State {
         self.queue.write_buffer(
             &self.buffers["cuts"],
             0,
-            bytemuck::bytes_of(&[1.0 as f32, 0.0, 0.0, 0.0]),
+            bytemuck::bytes_of(&[mincut, maxcut, 0.0, 0.0]),
         );
+
+        self.mincut = mincut;
+        self.maxcut = maxcut;
 
         self.volumetric_renderer.set_volume(&self.device, &self.buffers, new_cube);
 
@@ -444,7 +468,7 @@ use std::ops::Range;
 #[derive(Debug, Default)]
 struct Params {
     perspective: Option<bool>,
-    minmax: Option<Range<f32>>,
+    cuts: Option<Range<f32>>,
     data: Option<Vec<u8>>,
 }
 
@@ -460,7 +484,7 @@ lazy_static! {
 
 static mut PARAMS: Params = Params {
     perspective: None,
-    minmax: None,
+    cuts: None,
     data: None,
 };
 
@@ -485,7 +509,7 @@ pub fn normalize(min: f32, max: f32) {
         CHANNEL_PARAMS
             .0
             .send(Params {
-                minmax: Some(min..max),
+                cuts: Some(min..max),
                 ..Default::default()
             })
             .await
@@ -617,7 +641,7 @@ impl ApplicationHandler for App {
         if let Ok(params) = CHANNEL_PARAMS.1.try_recv() {
             let Params {
                 perspective,
-                minmax,
+                cuts,
                 data,
             } = params;
 
@@ -634,11 +658,11 @@ impl ApplicationHandler for App {
                 );
             }
 
-            if let Some(minmax) = minmax {
+            if let Some(cuts) = cuts {
                 state.queue.write_buffer(
-                    &state.buffers["minmax"],
+                    &state.buffers["cuts"],
                     0,
-                    bytemuck::bytes_of(&[minmax.start, minmax.end, 0.0_f32, 0.0_f32]),
+                    bytemuck::bytes_of(&[cuts.start, cuts.end, 0.0_f32, 0.0_f32]),
                 );
             }
 
@@ -655,9 +679,11 @@ impl ApplicationHandler for App {
         }
 
         // let egui render to process the event first
-        state
+        if let egui_winit::EventResponse { consumed: true, .. } = state
             .egui_renderer
-            .handle_input(self.window.as_ref().unwrap(), &event);
+            .handle_input(self.window.as_ref().unwrap(), &event) {
+                return;
+            }
         
         match event {
             #[cfg(not(target_arch = "wasm32"))]
@@ -751,6 +777,8 @@ impl ApplicationHandler for App {
                 self.start_cursor_pos = self.cursor_pos;
                 self.dscale = 0.0;
                 self.doffset = 0.0;
+                self.offset = self.state.as_ref().unwrap().maxcut;
+                self.scale = self.state.as_ref().unwrap().mincut;
             }
             WindowEvent::MouseInput {
                 state: ElementState::Released,
@@ -862,6 +890,8 @@ struct Cube<'a> {
     dim: (u32, u32, u32),
     datamin: Option<f32>,
     datamax: Option<f32>,
+    mincut: f32,
+    maxcut: f32,
 }
 
 fn parse_fits_data_cube<'a, R>(fits: &'a mut Fits<Cursor<R>>) -> Result<Cube<'a>, &'static str>
@@ -877,10 +907,12 @@ where
                     Some(Value::Integer { value: w, .. }),
                     Some(Value::Integer { value: h, .. }),
                     Some(Value::Integer { value: d, .. }),
+                    Some(Value::Integer { value: b, .. })
                 ) = (
                     header.get("NAXIS1"),
                     header.get("NAXIS2"),
                     header.get("NAXIS3"),
+                    header.get("BITPIX"),
                 ) {
                     let image = fits.get_data(&hdu);
 
@@ -895,7 +927,24 @@ where
                         }
                     }
 
-                    let data = image.raw_bytes();
+                    let mincut = 0.0;
+                    let maxcut = 1.0;
+
+                    let mut data = image.raw_bytes();
+
+                    let cuts = match b {
+                        -32 => {
+                            use std::convert::TryInto;
+                            let mut floats: Vec<f32> = data
+                                .chunks_exact(4)
+                                .map(|b| f32::from_be_bytes(b.try_into().unwrap()))
+                                .collect();
+
+                            first_and_last_percent_f32(&mut floats, 5, 95)
+                        }
+                        _ => todo!()
+                    };
+
 
                     let datamin = if let Some(Value::Float { value, .. }) = header.get("DATAMIN") {
                         Some(*value as f32)
@@ -913,6 +962,8 @@ where
                         dim: (d1, d2, d3),
                         datamin,
                         datamax,
+                        mincut: cuts.start,
+                        maxcut: cuts.end
                     })
                 } else {
                     Err("FITS image extension not found")
@@ -930,18 +981,100 @@ fn read_fits<R: AsRef<[u8]> + Debug>(
     reader: Cursor<R>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-) -> Result<(Texture, Option<f32>, Option<f32>), &'static str> {
+) -> Result<(Texture, Option<f32>, Option<f32>, f32, f32), &'static str> {
     let mut fits = Fits::from_reader(reader);
     let Cube {
         data: raw_bytes,
         dim,
         datamin,
         datamax,
+        mincut,
+        maxcut
     } = parse_fits_data_cube(&mut fits)?;
 
     Ok((
         Texture::from_raw_bytes::<f32>(&device, &queue, Some(raw_bytes), dim, 4, "cube")?,
         datamin,
         datamax,
+        mincut,
+        maxcut
     ))
+}
+
+trait EndianConvert {
+    fn to_be(self) -> Self;
+    fn to_le(self) -> Self;
+}
+
+macro_rules! impl_endian {
+    ($($t:ty),*) => {
+        $(
+            impl EndianConvert for $t {
+                fn to_be(self) -> Self { <$t>::to_be(self) }
+                fn to_le(self) -> Self { <$t>::to_le(self) }
+            }
+        )*
+    };
+}
+
+impl_endian!(u16, u32, u64, i16, i32, i64, f32, f64);
+
+use std::cmp::Ordering;
+pub fn first_and_last_percent_f32(
+    slice: &mut [f32],
+    mut first_percent: i32,
+    mut last_percent: i32,
+) -> Range<f32> {
+    if slice.is_empty() {
+        return 0.0..0.0;
+    }
+
+    if first_percent > last_percent {
+        std::mem::swap(&mut first_percent, &mut last_percent);
+    }
+
+    // Move all NaNs to the end
+    let valid_len = {
+        let mut i = 0;
+        for j in 0..slice.len() {
+            if !slice[j].is_nan() {
+                slice.swap(i, j);
+                i += 1;
+            }
+        }
+        i
+    };
+
+    if valid_len == 0 {
+        return f32::NAN..f32::NAN;
+    }
+
+    let valid = &mut slice[..valid_len];
+
+    let n = valid.len();
+    let i1 = (first_percent.clamp(0, 100) as usize * valid_len) / 100;
+    let i2 = (last_percent.clamp(0, 100) as usize * valid_len) / 100;
+
+    let min_val = {
+        let (_, min_val, _) =
+            valid.select_nth_unstable_by(i1, |a, b| {
+                //let a = a.to_be();
+                //let b = b.to_be();
+
+                a.total_cmp(&b)
+            });
+        *min_val
+    };
+    let max_val = {
+        let (_, max_val, _) =
+            valid.select_nth_unstable_by(i2, |a, b| {
+                //let a = a.to_be();
+                //let b = b.to_be();
+
+                a.total_cmp(&b)
+            });
+        *max_val
+    };
+
+    min_val..max_val
 }
