@@ -113,19 +113,6 @@ impl VolumetricRenderer {
                     },
                     count: None,
                 },
-                // minmax uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
             ],
             label: Some("texture_bind_group_layout"),
         });
@@ -190,14 +177,6 @@ impl VolumetricRenderer {
                     binding: 7,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["perspective"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["minmax"],
                         offset: 0,
                         size: wgpu::BufferSize::new(16),
                     }),
@@ -367,14 +346,6 @@ impl VolumetricRenderer {
                     binding: 7,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["perspective"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["minmax"],
                         offset: 0,
                         size: wgpu::BufferSize::new(16),
                     }),

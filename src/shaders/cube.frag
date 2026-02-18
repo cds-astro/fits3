@@ -26,10 +26,6 @@ layout(set = 0, binding = 7)
 uniform Perspective {
     vec4 perspective;
 };
-layout(set = 0, binding = 8)
-uniform MinMax {
-    vec4 minmax;
-};
 
 vec3 lonlat2xyz(float lon, float lat) {
     float lat_s = sin(lat);

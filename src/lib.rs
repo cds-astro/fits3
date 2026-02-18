@@ -56,17 +56,6 @@ const CUBES_PATH: &[&'static str] = &[
     "./cubes/DHIGLS_PO_Tb.fits", //"./cubes/cosmo512-be.fits",
 ];
 
-const MINMAX: &[Range<f32>] = &[
-    0.0..1.0,
-    0.0..1.0,
-    -2.451346722E-03..1.179221552E-02,
-    -2.451346722E-03..1.179221552E-02,
-    -2.451346722E-03..1.179221552E-02,
-    0.0..1.0,
-    0.0..1.0,
-    0.0..1.0,
-];
-
 use std::collections::HashMap;
 struct State {
     surface: wgpu::Surface<'static>,
@@ -176,12 +165,6 @@ impl State {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })),
-            ("minmax", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("minmax"),
-                size: 16,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
             ("cam_origin", device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Cam origin"),
                 size: 16,
@@ -208,12 +191,6 @@ impl State {
             &buffers["cuts"],
             0,
             bytemuck::bytes_of(&[1.0 as f32, 0.0, 0.0, 0.0]),
-        );
-
-        queue.write_buffer(
-            &buffers["minmax"],
-            0,
-            bytemuck::bytes_of(&[0.0_f32, 1.0, 0.0, 0.0]),
         );
 
         let clock = Clock::now();
@@ -432,21 +409,8 @@ impl State {
     fn visualize_cube<R: AsRef<[u8]> + std::fmt::Debug>(
         &mut self,
         reader: Cursor<R>,
-        // override the minmax value
-        min: Option<f32>,
-        max: Option<f32>,
     ) -> Result<(), &'static str> {
-        let (new_cube, datamin, datamax, mincut, maxcut) = read_fits(reader, &self.device, &self.queue)?;
-
-        // set the new datamin/datamax if there is some
-        let datamin = min.or(datamin).unwrap_or(0.0);
-        let datamax = max.or(datamax).unwrap_or(1.0);
-
-        self.queue.write_buffer(
-            &self.buffers["minmax"],
-            0,
-            bytemuck::bytes_of(&[datamin, datamax, 0.0_f32, 0.0_f32]),
-        );
+        let (new_cube, mincut, maxcut) = read_fits(reader, &self.device, &self.queue)?;
 
         // reset the cutoff values
         self.queue.write_buffer(
@@ -607,7 +571,7 @@ impl App {
             let mmap = unsafe { Mmap::map(&file).unwrap() };
 
             let reader = Cursor::new(mmap);
-            let _ = state.visualize_cube(reader, None, None);
+            let _ = state.visualize_cube(reader);
         }
 
         self.window.get_or_insert(window);
@@ -628,7 +592,7 @@ impl ApplicationHandler for App {
         #[cfg(target_arch = "wasm32")]
         if let Ok(data) = state.recv_data.try_recv() {
             let reader = Cursor::new(data.as_slice());
-            match state.visualize_cube(reader, None, None) {
+            match state.visualize_cube(reader) {
                 Ok(()) => {}
                 Err(error) => web_sys::window()
                     .unwrap()
@@ -668,7 +632,7 @@ impl ApplicationHandler for App {
 
             if let Some(data) = data {
                 let reader = Cursor::new(data.as_slice());
-                match state.visualize_cube(reader, None, None) {
+                match state.visualize_cube(reader) {
                     Ok(()) => {}
                     Err(error) => web_sys::window()
                         .unwrap()
@@ -715,9 +679,8 @@ impl ApplicationHandler for App {
 
                 let reader = Cursor::new(mmap);
 
-                let minmax = &MINMAX[self.i];
                 let _ = state
-                    .visualize_cube(reader, Some(minmax.start), Some(minmax.end));
+                    .visualize_cube(reader);
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -888,8 +851,6 @@ fn create_window(event_loop: &ActiveEventLoop) -> Window {
 struct Cube<'a> {
     data: &'a [u8],
     dim: (u32, u32, u32),
-    datamin: Option<f32>,
-    datamax: Option<f32>,
     mincut: f32,
     maxcut: f32,
 }
@@ -945,23 +906,9 @@ where
                         _ => todo!()
                     };
 
-
-                    let datamin = if let Some(Value::Float { value, .. }) = header.get("DATAMIN") {
-                        Some(*value as f32)
-                    } else {
-                        None
-                    };
-                    let datamax = if let Some(Value::Float { value, .. }) = header.get("DATAMAX") {
-                        Some(*value as f32)
-                    } else {
-                        None
-                    };
-
                     Ok(Cube {
                         data,
                         dim: (d1, d2, d3),
-                        datamin,
-                        datamax,
                         mincut: cuts.start,
                         maxcut: cuts.end
                     })
@@ -981,43 +928,21 @@ fn read_fits<R: AsRef<[u8]> + Debug>(
     reader: Cursor<R>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-) -> Result<(Texture, Option<f32>, Option<f32>, f32, f32), &'static str> {
+) -> Result<(Texture, f32, f32), &'static str> {
     let mut fits = Fits::from_reader(reader);
     let Cube {
         data: raw_bytes,
         dim,
-        datamin,
-        datamax,
         mincut,
         maxcut
     } = parse_fits_data_cube(&mut fits)?;
 
     Ok((
         Texture::from_raw_bytes::<f32>(&device, &queue, Some(raw_bytes), dim, 4, "cube")?,
-        datamin,
-        datamax,
         mincut,
         maxcut
     ))
 }
-
-trait EndianConvert {
-    fn to_be(self) -> Self;
-    fn to_le(self) -> Self;
-}
-
-macro_rules! impl_endian {
-    ($($t:ty),*) => {
-        $(
-            impl EndianConvert for $t {
-                fn to_be(self) -> Self { <$t>::to_be(self) }
-                fn to_le(self) -> Self { <$t>::to_le(self) }
-            }
-        )*
-    };
-}
-
-impl_endian!(u16, u32, u64, i16, i32, i64, f32, f64);
 
 use std::cmp::Ordering;
 pub fn first_and_last_percent_f32(
