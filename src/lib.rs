@@ -45,6 +45,7 @@ use std::fs::File;
 use std::io::Cursor;
 
 const CUBES_PATH: &[&'static str] = &[
+    "./cubes/cutout-CDS_P_LGLBSHI16.fits",
     "./cubes/NGC_628_RO_CUBE_THINGS.FITS",
     "./cubes/cutout-CDS_P_LGLBSHI16.fits",
     "./cubes/cutout-CDS_C_GALFAHI.fits",
@@ -103,6 +104,12 @@ struct State {
     show_isosurface: bool,
     show_options: bool,
     show_unique_slice: bool,
+
+
+    delta: f64,
+    theta: f64,
+    dtheta: f64,
+    ddelta: f64,
 
     egui_renderer: gui::EguiRenderer, //egui: EguiRenderer,
 }
@@ -274,6 +281,17 @@ impl State {
             bytemuck::bytes_of(&[0.0 as f32, 1.0, 0.0, 0.0]),
         );
 
+
+        queue.write_buffer(
+            &buffers["cam_origin"],
+            0,
+            bytemuck::bytes_of(&[std::f32::consts::PI, 0.0, 0.0, 0.0]),
+        );
+
+
+
+
+
         let clock = Clock::now();
 
         // Egui renderer init
@@ -361,6 +379,11 @@ impl State {
             show_options: false,
             show_unique_slice: false,
 
+            delta: 0.0,
+            theta: std::f64::consts::PI,
+            dtheta: 0.0,
+            ddelta: 0.0,
+
             clock,
             egui_renderer,
             volumetric_renderer,
@@ -412,6 +435,10 @@ impl State {
     }
 
     fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
+
+        let mut new_view: Option<(f32, f32)> = None;
+        
+
         let size = window.inner_size();
         if size.width == 0 || size.height == 0 {
             return Ok(());
@@ -522,6 +549,44 @@ impl State {
                         ui.label("Viewport");
                         ui.checkbox(&mut perspective, "Perspective");
 
+                        
+                        
+                        
+                        if ui.button("Reset/Front View").clicked() {
+                            new_view = Some((std::f32::consts::PI, 0.0));
+                        }
+
+                        if ui.button("Back View").clicked() {
+                            new_view = Some((0.0, 0.0));
+                        }
+
+                        if ui.button("Left View").clicked() {
+                            new_view = Some((-std::f32::consts::PI/2.0, 0.0));
+                        }
+
+                        if ui.button("Right View").clicked() {
+                            new_view = Some((std::f32::consts::PI/2.0, 0.0));
+                        }
+
+                        if ui.button("Top View").clicked() {
+                            new_view = Some((std::f32::consts::PI, std::f32::consts::PI * 0.5 - 1e-3));
+                        }
+
+                        if ui.button("Bottom View").clicked() {
+                            new_view = Some((std::f32::consts::PI, -std::f32::consts::PI * 0.5 + 1e-3));
+                        }
+
+
+
+
+
+
+
+
+
+
+
+
                         self.queue.write_buffer(
                             &self.buffers["isosurface"],
                             0,
@@ -553,6 +618,30 @@ impl State {
                             bytemuck::bytes_of(&[slice_range.start as f32, slice_range.end as f32, 0.0, 0.0]),
                         );
                     });
+
+
+                    if let Some((theta,delta)) = new_view {
+                        self.theta = theta as f64;
+                        self.delta = delta as f64;
+                        self.dtheta = 0.0;
+                        self.ddelta = 0.0;
+                        
+                        self.queue.write_buffer(
+                            &self.buffers["cam_origin"],
+                            0,
+                            bytemuck::bytes_of(&[theta, delta, 0.0, 0.0]),
+                        );
+                    }
+
+
+
+
+
+
+
+
+
+
 
                     self.isosurface = isosurface;
                     self.perspective = perspective;
@@ -714,10 +803,6 @@ pub struct App {
     cuts: bool,
     cursor_pos: PhysicalPosition<f64>,
     start_cursor_pos: PhysicalPosition<f64>,
-    delta: f64,
-    theta: f64,
-    dtheta: f64,
-    ddelta: f64,
     sm1: f32,
     sm2: f32,
 
@@ -744,10 +829,6 @@ impl App {
             cuts: false,
             cursor_pos: PhysicalPosition::new(0.0, 0.0),
             start_cursor_pos: PhysicalPosition::new(0.0, 0.0),
-            delta: 0.0,
-            theta: 0.0,
-            dtheta: 0.0,
-            ddelta: 0.0,
 
             sm1: 1.0,
             sm2: 0.0,
@@ -906,6 +987,114 @@ impl ApplicationHandler for App {
                     .unwrap()
                     .set_fullscreen(Some(Fullscreen::Borderless(None)));
             }
+
+
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::Space),
+                        ..
+                    },
+                ..
+            } => {
+                state.theta = std::f64::consts::PI;
+                state.dtheta = 0.0;
+                state.delta = 0.0;
+                state.ddelta = 0.0;
+                state.queue.write_buffer(
+                    &state.buffers["cam_origin"],
+                    0,
+                    bytemuck::bytes_of(&[state.theta as f32 + state.dtheta as f32, 0.0, 0.0, 0.0]),
+                );
+            }
+
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::ArrowLeft),
+                        ..
+                    },
+                ..
+            } => {
+                state.theta += std::f64::consts::PI/4.0;
+                state.queue.write_buffer(
+                    &state.buffers["cam_origin"],
+                    0,
+                    bytemuck::bytes_of(&[state.theta as f32 + state.dtheta as f32, state.delta as f32 + state.ddelta as f32, 0.0, 0.0]),
+                );
+            }
+
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::ArrowRight),
+                        ..
+                    },
+                ..
+            } => {
+                state.theta -= std::f64::consts::PI/4.0;
+                state.queue.write_buffer(
+                    &state.buffers["cam_origin"],
+                    0,
+                    bytemuck::bytes_of(&[state.theta as f32 + state.dtheta as f32, state.delta as f32 + state.ddelta as f32, 0.0, 0.0]),
+                );
+            }
+
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::ArrowUp),
+                        ..
+                    },
+                ..
+            } => {
+                state.delta = (state.delta + std::f64::consts::PI / 4.0).clamp(
+                    -std::f64::consts::PI * 0.5 + 1e-3,
+                    std::f64::consts::PI * 0.5 - 1e-3,
+                );
+                state.queue.write_buffer(
+                    &state.buffers["cam_origin"],
+                    0,
+                    bytemuck::bytes_of(&[state.theta as f32 + state.dtheta as f32, state.delta as f32 + state.ddelta as f32, 0.0, 0.0]),
+                );
+            }
+
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::ArrowDown),
+                        ..
+                    },
+                ..
+            } => {
+                state.delta = (state.delta - std::f64::consts::PI / 4.0).clamp(
+                    -std::f64::consts::PI * 0.5 + 1e-3,
+                    std::f64::consts::PI * 0.5 - 1e-3,
+                );
+                state.queue.write_buffer(
+                    &state.buffers["cam_origin"],
+                    0,
+                    bytemuck::bytes_of(&[state.theta as f32 + state.dtheta as f32, state.delta as f32 + state.ddelta as f32, 0.0, 0.0]),
+                );
+            }
+
+
+
+
+
+
+
+
+
+
+
+
+
             WindowEvent::Resized(physical_size) => state.resize(physical_size),
             WindowEvent::RedrawRequested => {
                 state.update();
@@ -922,8 +1111,8 @@ impl ApplicationHandler for App {
             } => {
                 self.panning = true;
                 self.start_cursor_pos = self.cursor_pos;
-                self.dtheta = 0.0;
-                self.ddelta = 0.0;
+                state.dtheta = 0.0;
+                state.ddelta = 0.0;
             }
             WindowEvent::MouseInput {
                 state: ElementState::Released,
@@ -931,10 +1120,10 @@ impl ApplicationHandler for App {
                 ..
             } => {
                 self.panning = false;
-                self.theta += self.dtheta;
-                self.delta += self.ddelta;
+                state.theta += state.dtheta;
+                state.delta += state.ddelta;
 
-                self.delta = self.delta.clamp(
+                state.delta = state.delta.clamp(
                     -std::f64::consts::PI * 0.5 + 1e-3,
                     std::f64::consts::PI * 0.5 - 1e-3,
                 );
@@ -968,10 +1157,10 @@ impl ApplicationHandler for App {
                     let dy = (self.cursor_pos.y - self.start_cursor_pos.y)
                         / ((state.size.height as f64) * 0.5);
 
-                    self.dtheta = 2.0 * dx;
-                    self.ddelta = dy;
+                    state.dtheta = 2.0 * dx;
+                    state.ddelta = dy;
 
-                    let d = (self.delta as f32 + self.ddelta as f32).clamp(
+                    let d = (state.delta as f32 + state.ddelta as f32).clamp(
                         -std::f32::consts::PI * 0.5 + 1e-3,
                         std::f32::consts::PI * 0.5 - 1e-3,
                     );
@@ -979,7 +1168,7 @@ impl ApplicationHandler for App {
                     state.queue.write_buffer(
                         &state.buffers["cam_origin"],
                         0,
-                        bytemuck::bytes_of(&[self.theta as f32 + self.dtheta as f32, d, 0.0, 0.0]),
+                        bytemuck::bytes_of(&[state.theta as f32 + state.dtheta as f32, d, 0.0, 0.0]),
                     );
                 } else if self.cuts {
                     let dx =
