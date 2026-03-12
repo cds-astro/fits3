@@ -26,6 +26,22 @@ layout(set = 0, binding = 7)
 uniform Perspective {
     vec4 perspective;
 };
+layout(set = 0, binding = 8)
+uniform Isosurface {
+    vec4 isosurface;
+};
+layout(set = 0, binding = 9)
+uniform DiffuseColor {
+    vec4 diffuse_color;
+};
+layout(set = 0, binding = 10)
+uniform Size {
+    vec4 cube_size;
+};
+layout(set = 0, binding = 11)
+uniform Slices {
+    vec4 slices;
+};
 
 vec3 lonlat2xyz(float lon, float lat) {
     float lat_s = sin(lat);
@@ -144,13 +160,30 @@ bool is_finite_f32(float x) {
 
 const float fov = 0.523333;
 const float camera_near = 1.0;
-//const float dmin = -2.451346722E-03;
-//const float dmax = 1.179221552E-02;
 
-// we define our cube as 2 bounds vertices, l and h
-const vec3 l = vec3(-0.5, -0.5, -0.5);
-const vec3 h = vec3(0.5, 0.5, 0.5);
+float probe_cube(vec3 p) {
+    float v = to_l_endian(texture(sampler3D(t_map, s_map), p).r);
+    // max suppress the NaNs, if v is NaN then we add 0.0
+    return max(v, 0.0);
+}
+
+vec3 compute_normal(vec3 p) {
+    vec3 dv = 2.0 / cube_size.xyz;
+
+    vec3 n = vec3(
+        probe_cube(p - vec3(dv.x, 0.0, 0.0)) - probe_cube(p + vec3(dv.x, 0.0, 0.0)),
+        probe_cube(p - vec3(0.0, dv.y, 0.0)) - probe_cube(p + vec3(0.0, dv.y, 0.0)),
+        probe_cube(p - vec3(0.0, 0.0, dv.z)) - probe_cube(p + vec3(0.0, 0.0, dv.z))
+    );
+
+    return normalize(n);
+}
+
 void main() {
+        // we define our cube as 2 bounds vertices, l and h
+    vec3 l = vec3(-0.5, -0.5, (slices.x / cube_size.z) - 0.5);
+    vec3 h = vec3(0.5, 0.5, (slices.y / cube_size.z) - 0.5);
+
     vec3 cam_origin = lonlat2xyz(origin.x, origin.y);
 
     // vector from camera origin to the look
@@ -167,13 +200,7 @@ void main() {
     // vector director from the cam origin to the pixel on screen
     // traditional perspective director vector
     // orthographic perspective
-    vec3 r;
-    if (perspective.x == 1.0) {
-        // perspective
-        r = normalize(p_cam - cam_origin);
-    } else {
-        r = cam_dir;
-    }
+    vec3 r = mix(normalize(p_cam - cam_origin), cam_dir, float(perspective.x == 0.0));
 
     vec3 t_low = (l - p_cam) / r;
     vec3 t_high = (h - p_cam) / r;
@@ -188,45 +215,42 @@ void main() {
         discard;
     }
 
-    float intensity = 0.0;
-    float step = 0.01;
+    vec3 voxel_size = 2.0 / cube_size.xyz;
+    vec3 inv_dir = abs(r) / voxel_size;
+    float step = 1.0 / max(max(inv_dir.x, inv_dir.y), inv_dir.z);
+    //float step = 1.0 / 512.0;
     int num_sampling = int((t_f - t_c) / step);
-    /*
-    int num_sampling = min(int((t_f - t_c) / step), 50);
-    if (num_sampling == 50) {
-        step = (t_f - t_c) / float(num_sampling);
-    }*/
-    //float num_sampling = 100.0;
-    //float step = max((t_f - t_c) / num_sampling, 0.0005);
 
     vec3 dr = r * step;
 
     float random = fract(sin(gl_FragCoord.x * 12.9898 + gl_FragCoord.y * 78.233) * 43758.5453);
-    //float random = 0.0;
-    float t_s = t_c + step * random;
+    float t_s = t_c + random * step;
     // absolute sampling point
     // scaled to the origin of the cube
-    vec3 p = p_cam + r * t_s - l;
-    for (int i = 0; i < num_sampling; i++) {
-        float v = to_l_endian(texture(sampler3D(t_map, s_map), p).r);
-
-        // max suppress the NaNs, if v is NaN then we add 0.0
-        intensity += max(v, 0.0);
-        /*alpha *= 0.97;
-        if (alpha < 1e-3) {
-            break;
-        }*/
+    vec3 p = p_cam + r * t_s - vec3(-0.5);
+    vec3 pp = p;
+    int i = 0;
+    // Set v to negative infinity
+    float v = -1e30;
+    while (i < num_sampling && v < isosurface.x) {
+        pp = p;
         p += dr;
+
+        v = probe_cube(p);
+        i++;
     }
 
-    intensity /= num_sampling;
-    intensity = clamp((intensity - cut.x) / (cut.y - cut.x), 0.0, 1.0);
-    //intensity = 1.0 - alpha;
+    float vv = probe_cube(pp);
+    vec3 ps = pp + (p - pp) * (isosurface.x - vv) / (v - vv);
 
-    //intensity = asinhStretch(intensity, 2.0, 1.0);
+    vec3 N = compute_normal(ps);
+    vec3 L = normalize(vec3(10.0, 10.0, 10.0) - ps);
 
-    //f_color = vec4(colormap_turbo(intensity), 1.0);
-    f_color = colormap(intensity);
-    //f_color = vec4(intensity);
+    float c = clamp((isosurface.x - cut.x) / (cut.y - cut.x), 0.0, 1.0);
+
+    vec4 color = vec4(diffuse_color.rgb*0.05 + diffuse_color.rgb * max(dot(N, L), 0.0), diffuse_color.a);
+    //f_color = vec4(cc.rgb*0.05 + cc.rgb * max(dot(N, l), 0.0), 1.0);
+
+    f_color = mix(vec4(0.0, 0.0, 0.0, 1.0), color, float(v > isosurface.x));
 }
  

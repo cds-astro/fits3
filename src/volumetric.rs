@@ -5,7 +5,8 @@ use crate::Texture;
 use crate::VertexNDC;
 use crate::Vec4;
 pub(crate) struct VolumetricRenderer {
-    render_pipeline: wgpu::RenderPipeline,
+    volumetric_rendering_pipeline: wgpu::RenderPipeline,
+    isosurface_rendering_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
 
@@ -113,6 +114,58 @@ impl VolumetricRenderer {
                     },
                     count: None,
                 },
+                // isosurface uniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
+                        ),
+                    },
+                    count: None,
+                },
+                // diffuse color uniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
+                        ),
+                    },
+                    count: None,
+                },
+                // size of the cube
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
+                        ),
+                    },
+                    count: None,
+                },
+                // slice ranges
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
+                        ),
+                    },
+                    count: None,
+                },
             ],
             label: Some("texture_bind_group_layout"),
         });
@@ -181,13 +234,45 @@ impl VolumetricRenderer {
                         size: wgpu::BufferSize::new(16),
                     }),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["isosurface"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["diffuse_color"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["size"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["slice_range"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
+                    }),
+                },
             ],
             label: Some("diffuse_bind_group"),
         });
 
         // uniform buffer
         let vs_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cube vert shader"),
+            label: Some("vertex shader"),
             source: wgpu::ShaderSource::Glsl {
                 #[cfg(not(target_arch = "wasm32"))]
                 shader: std::str::from_utf8(&std::fs::read("src/shaders/cube.vert").unwrap())
@@ -199,15 +284,28 @@ impl VolumetricRenderer {
                 defines: Default::default(),
             },
         });
-        let fs_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cube frag shader"),
+        let fs_v_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("volumetric frag shader"),
             source: wgpu::ShaderSource::Glsl {
                 #[cfg(not(target_arch = "wasm32"))]
-                shader: std::str::from_utf8(&std::fs::read("src/shaders/cube.frag").unwrap())
+                shader: std::str::from_utf8(&std::fs::read("src/shaders/volumetric.frag").unwrap())
                     .unwrap()
                     .into(),
                 #[cfg(target_arch = "wasm32")]
-                shader: include_str!("shaders/cube.frag").into(),
+                shader: include_str!("shaders/volumetric.frag").into(),
+                stage: wgpu::naga::ShaderStage::Fragment,
+                defines: Default::default(),
+            },
+        });
+        let fs_i_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("isosurface frag shader"),
+            source: wgpu::ShaderSource::Glsl {
+                #[cfg(not(target_arch = "wasm32"))]
+                shader: std::str::from_utf8(&std::fs::read("src/shaders/isosurface.frag").unwrap())
+                    .unwrap()
+                    .into(),
+                #[cfg(target_arch = "wasm32")]
+                shader: include_str!("shaders/isosurface.frag").into(),
                 stage: wgpu::naga::ShaderStage::Fragment,
                 defines: Default::default(),
             },
@@ -221,8 +319,8 @@ impl VolumetricRenderer {
                 push_constant_ranges: &[],
             });
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
+        let volumetric_rendering_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Volumetric rendering pipeline"),
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &vs_shader,
@@ -231,7 +329,49 @@ impl VolumetricRenderer {
                 buffers: &[VertexNDC::desc()],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &fs_shader,
+                module: &fs_v_shader,
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            //multiview_mask: None,
+            multiview: None,
+            cache: None, // 6.
+        });
+
+        let isosurface_rendering_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Volumetric rendering pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &vs_shader,
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                buffers: &[VertexNDC::desc()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &fs_i_shader,
                 entry_point: Some("main"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
@@ -280,7 +420,8 @@ impl VolumetricRenderer {
         });
 
         Self {
-            render_pipeline,
+            volumetric_rendering_pipeline,
+            isosurface_rendering_pipeline,
             vertex_buffer,
             index_buffer,
             diffuse_bind_group,
@@ -350,12 +491,44 @@ impl VolumetricRenderer {
                         size: wgpu::BufferSize::new(16),
                     }),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["isosurface"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["diffuse_color"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["size"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["slice_range"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
+                    }),
+                },
             ],
             label: Some("diffuse_bind_group"),
         });
     }
 
-    pub(crate) fn render_frame(&self, encoder: &mut wgpu::CommandEncoder, window_surface_view: &TextureView) {
+    pub(crate) fn render_frame(&self, encoder: &mut wgpu::CommandEncoder, window_surface_view: &TextureView, show_isosurface: bool) {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -378,7 +551,12 @@ impl VolumetricRenderer {
             //multiview_mask: None,
         });
 
-        render_pass.set_pipeline(&self.render_pipeline);
+        if show_isosurface {
+            render_pass.set_pipeline(&self.isosurface_rendering_pipeline);
+        } else {
+            render_pass.set_pipeline(&self.volumetric_rendering_pipeline);
+        }
+
         render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass

@@ -19,8 +19,6 @@ impl EguiRenderer {
     pub fn new(
         device: &Device,
         output_color_format: TextureFormat,
-        output_depth_format: Option<TextureFormat>,
-        msaa_samples: u32,
         window: &Window,
     ) -> EguiRenderer {
         let egui_context = Context::default();

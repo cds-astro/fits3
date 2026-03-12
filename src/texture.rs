@@ -5,7 +5,6 @@ pub struct Texture {
     num_bytes_per_pixel: usize,
 }
 use byte_slice_cast::*;
-use log::warn;
 
 pub trait TextureFormat: ToByteSlice {
     const WGPU_FORMAT: wgpu::TextureFormat;

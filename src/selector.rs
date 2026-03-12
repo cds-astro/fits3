@@ -1,7 +1,5 @@
 use wgpu::util::DeviceExt;
 use wgpu::TextureView;
-use crate::Mat4;
-use crate::Texture;
 use crate::Vertex;
 use crate::Vec4;
 
@@ -44,45 +42,18 @@ pub(crate) struct SelectorRenderer {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
 
-    texture_bind_group_layout: wgpu::BindGroupLayout,
     diffuse_bind_group: wgpu::BindGroup,
 }
 
 use std::collections::HashMap;
 impl SelectorRenderer {
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue, config: &wgpu::SurfaceConfiguration, buffers: &HashMap<&'static str, wgpu::Buffer>) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, buffers: &HashMap<&'static str, wgpu::Buffer>) -> Self {
         let texture_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
-                // rot matrix uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Mat4<f32>>() as _,
-                        ),
-                    },
-                    count: None,
-                },
                 // window size uniform
                 wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // time uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
+                    binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -95,7 +66,7 @@ impl SelectorRenderer {
                 },
                 // cam origin uniform
                 wgpu::BindGroupLayoutEntry {
-                    binding: 3,
+                    binding: 1,
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -107,6 +78,32 @@ impl SelectorRenderer {
                     count: None,
                 },
                 // perspective uniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
+                        ),
+                    },
+                    count: None,
+                },
+                // cube size uniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
+                        ),
+                    },
+                    count: None,
+                },
+                // cube position uniform
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
                     visibility: wgpu::ShaderStages::VERTEX,
@@ -129,31 +126,13 @@ impl SelectorRenderer {
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["rotmat"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Mat4<f32>>() as wgpu::BufferAddress
-                        ),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["window_size"],
                         offset: 0,
                         size: wgpu::BufferSize::new(16),
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["time"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
+                    binding: 1,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["cam_origin"],
                         offset: 0,
@@ -161,9 +140,25 @@ impl SelectorRenderer {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: 2,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["perspective"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["cube_size"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["cube_position"],
                         offset: 0,
                         size: wgpu::BufferSize::new(16),
                     }),
@@ -266,7 +261,6 @@ impl SelectorRenderer {
             vertex_buffer,
             index_buffer,
             diffuse_bind_group,
-            texture_bind_group_layout,
         }
     }
 

@@ -1,22 +1,21 @@
 extern crate byte_slice_cast;
 
-use log::warn;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
-use wgpu::Device;
 use winit::event_loop::ControlFlow;
 #[cfg(target_arch = "wasm32")]
 extern crate console_error_panic_hook;
 
 use std::iter;
-use std::path::Path;
+use std::convert::TryInto;
+use egui_double_slider::DoubleSlider;
 
-use wgpu::util::DeviceExt;
+
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalPosition,
     event::*,
-    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
+    event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::{Fullscreen, Window, WindowId},
 };
@@ -46,11 +45,12 @@ use std::fs::File;
 use std::io::Cursor;
 
 const CUBES_PATH: &[&'static str] = &[
+    "./cubes/NGC_628_RO_CUBE_THINGS.FITS",
     "./cubes/cutout-CDS_P_LGLBSHI16.fits",
     "./cubes/cutout-CDS_C_GALFAHI.fits",
     "./cubes/NGC3198_cube.fits",
     "./cubes/NGC7331_cube.fits",
-    "./cubes/CO_21.fits",
+    "./cubes/CO_21_binned.fits",
     "./cubes/DHIGLS_DF_Tb.fits",
     "./cubes/DHIGLS_MG_Tb.fits",
     "./cubes/DHIGLS_PO_Tb.fits", //"./cubes/cosmo512-be.fits",
@@ -76,11 +76,33 @@ struct State {
 
     // uniforms
     buffers: HashMap<&'static str, wgpu::Buffer>,
-
     clock: Clock,
 
-    mincut: f32,
-    maxcut: f32,
+    // NAXIS of the current loaded cube
+    naxis: (u32, u32, u32),
+
+    /// Cuts properties
+    // min cut precomputed corresponding to the first 1% of data 
+    cut10: f32,
+    // max cut precomputed corresponding to the last 99% of data
+    cut90: f32,
+    // current min cut
+    m1: f32,
+    // current max cut
+    m2: f32,
+    // isosurface value
+    isosurface: f32,
+    // a diffuse color to show the isosurface with
+    diffuse_color: [f32; 4],
+    // perspective rendering mode
+    perspective: bool,
+    // slice index
+    slice_idx: u32,
+
+    /// ui options
+    show_isosurface: bool,
+    show_options: bool,
+    show_unique_slice: bool,
 
     egui_renderer: gui::EguiRenderer, //egui: EguiRenderer,
 }
@@ -159,6 +181,24 @@ impl State {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })),
+            ("size", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Cube size"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
+            ("isosurface", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Isosurface max value"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
+            ("diffuse_color", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Diffuse color"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
             ("perspective", device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("perspective"),
                 size: 16,
@@ -177,8 +217,26 @@ impl State {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })),
+            ("slice_range", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Slice range"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
             ("window_size", device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("window size uniform"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
+            ("cube_size", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("cube size uniform"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
+            ("cube_position", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("cube position uniform"),
                 size: 16,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
@@ -193,10 +251,33 @@ impl State {
             bytemuck::bytes_of(&[1.0 as f32, 0.0, 0.0, 0.0]),
         );
 
+        // Uniform buffer
+        // set the initial cut values
+        queue.write_buffer(
+            &buffers["cube_size"],
+            0,
+            bytemuck::bytes_of(&[1.0 as f32, 1.0, 1.0, 0.0]),
+        );
+        queue.write_buffer(
+            &buffers["size"],
+            0,
+            bytemuck::bytes_of(&[1.0 as f32, 1.0, 1.0, 0.0]),
+        );
+        queue.write_buffer(
+            &buffers["cube_position"],
+            0,
+            bytemuck::bytes_of(&[0.0 as f32, 0.0, 0.0, 0.0]),
+        );
+        queue.write_buffer(
+            &buffers["slice_range"],
+            0,
+            bytemuck::bytes_of(&[0.0 as f32, 1.0, 0.0, 0.0]),
+        );
+
         let clock = Clock::now();
 
         // Egui renderer init
-        let mut egui_renderer = gui::EguiRenderer::new(&device, config.format, None, 1, window);
+        let egui_renderer = gui::EguiRenderer::new(&device, config.format, window);
 
         // Transfer local data for wasm
         #[cfg(target_arch = "wasm32")]
@@ -248,7 +329,7 @@ impl State {
         }
 
         let volumetric_renderer = VolumetricRenderer::new(&device, &queue, &config, &buffers);
-        let selector_renderer = SelectorRenderer::new(&device, &queue, &config, &buffers);
+        let selector_renderer = SelectorRenderer::new(&device, &config, &buffers);
 
         Self {
             surface,
@@ -266,8 +347,19 @@ impl State {
             // uniforms
             buffers,
 
-            mincut: 0.0,
-            maxcut: 1.0,
+            naxis: (1, 1, 1),
+
+            cut10: 0.0,
+            cut90: 1.0,
+            m1: 0.0,
+            m2: 1.0,
+            perspective: false,
+            isosurface: 0.0,
+            slice_idx: 0,
+            diffuse_color: [0.0, 1.0, 0.0, 1.0],
+            show_isosurface: false,
+            show_options: false,
+            show_unique_slice: false,
 
             clock,
             egui_renderer,
@@ -302,11 +394,6 @@ impl State {
             0,
             bytemuck::bytes_of(&[self.size.width as f32, self.size.height as f32, 0.0, 0.0]),
         );
-    }
-
-    #[allow(unused_variables)]
-    fn input(&mut self, event: &WindowEvent) -> bool {
-        false
     }
 
     fn update(&mut self) {
@@ -346,37 +433,138 @@ impl State {
                     label: Some("Render Encoder"),
                 });
 
-            self.volumetric_renderer.render_frame(&mut encoder, &view);
+            self.volumetric_renderer.render_frame(&mut encoder, &view, self.show_isosurface);
             self.selector_renderer.render_frame(&mut encoder, &view);
 
             {
                 self.egui_renderer.begin_frame(window);
 
-                egui::Window::new("fits3 cube viewer")
-                    .resizable(true)
-                    .vscroll(true)
-                    .default_open(false)
-                    .show(self.egui_renderer.context(), |ui| {
-                        ui.label("This will host the UI of the viewer!");
+                let mut isosurface = self.isosurface;
+                let mut perspective = self.perspective;
+                let mut diffuse_color = self.diffuse_color;
+                let mut show_isosurface = self.show_isosurface;
+                let mut show_options = self.show_options;
+                let mut show_unique_slice = self.show_unique_slice;
+                let mut m1 = self.m1;
+                let mut m2 = self.m2;
+                let mut slice_idx = self.slice_idx;
 
-                        /*if ui.button("Button!").clicked() {
-                            println!("boom!")
-                        }
+                egui::TopBottomPanel::top("top_bar").show(self.egui_renderer.context(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.heading("WebGPU 3D FITS viewer");
+                        ui.checkbox(&mut show_options, "Show options");
+                    });
+                });
+
+                let l = (self.cut90 - self.cut10).abs();
+                let datamin = self.cut10 - l;
+                let datamax = self.cut90 + 5.0*l;
+                let num_slices = self.naxis.2;
+                if show_options {
+                    egui::SidePanel::left("fits3 options")
+                    .resizable(true)
+                    .show(self.egui_renderer.context(), |ui| {
+                        // rendering scope
+                        ui.label("Mode");
+                        ui.checkbox(&mut show_isosurface, "Show isosurface");
 
                         ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.label(format!(
-                                "Pixels per point: {}",
-                                self.egui_renderer.context().pixels_per_point()
-                            ));
-                            if ui.button("-").clicked() {
-                                //state.scale_factor = (state.scale_factor - 0.1).max(0.3);
-                            }
-                            if ui.button("+").clicked() {
-                                //state.scale_factor = (state.scale_factor + 0.1).min(3.0);
-                            }
-                        });*/
+                        ui.checkbox(&mut show_unique_slice, "Slice selector");
+                        ui.add_enabled_ui(show_unique_slice, |ui| {
+                            ui.add(egui::Slider::new(&mut slice_idx, 0..=num_slices).text("slice idx"));
+                        });
+
+                        ui.separator();
+
+                        // Volumetric scope
+                        ui.add_enabled_ui(!show_isosurface, |ui| {
+                            ui.label("Maximum Intensity Projection");
+                            ui.add_sized(
+                                [ui.available_width(), 0.0],
+                                DoubleSlider::new(&mut m1, &mut m2, datamin..=datamax)
+                                    .width(ui.available_width())
+                                    .scroll_factor((datamax - datamin) / 100.0)
+                                    .separation_distance((datamax - datamin) / 100.0)
+                            );
+
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Slider::new(&mut m1, datamin..=datamax).text("min cut"));
+
+                                /*ui.add(
+                                    egui::DragValue::new(&mut m1)
+                                        .range(datamin..=m2)
+                                        .speed((datamax - datamin) / 100.0)
+                                );*/
+                            });
+                            ui.horizontal(|ui| {
+                                /*ui.add(
+                                    egui::DragValue::new(&mut m2)
+                                        .range(m1..=datamax)
+                                        .speed((datamax - datamin) / 100.0)
+                                )*/
+                                ui.add(egui::Slider::new(&mut m2, datamin..=datamax).text("max cut"));
+                            });
+                        });
+                        
+                        ui.separator();
+
+                        // Isosurface scope
+                        ui.add_enabled_ui(show_isosurface, |ui| {
+                            ui.label("Isosurface");
+                            ui.add(egui::Slider::new(&mut isosurface, datamin..=datamax).text("value"));
+                            ui.label("Diffuse color");
+                            ui.color_edit_button_rgba_unmultiplied(&mut diffuse_color);
+                        });
+                        
+                        ui.separator();
+
+                        // Viewport scope
+                        ui.label("Viewport");
+                        ui.checkbox(&mut perspective, "Perspective");
+
+                        self.queue.write_buffer(
+                            &self.buffers["isosurface"],
+                            0,
+                            bytemuck::bytes_of(&[isosurface, 0.0, 0.0, 0.0]),
+                        );
+                        self.queue.write_buffer(
+                            &self.buffers["perspective"],
+                            0,
+                            bytemuck::bytes_of(&[if perspective { 1.0_f32 } else { 0.0_f32 }, 0.0, 0.0, 0.0]),
+                        );
+                        self.queue.write_buffer(
+                            &self.buffers["diffuse_color"],
+                            0,
+                            bytemuck::bytes_of(&diffuse_color),
+                        );
+                        self.queue.write_buffer(
+                            &self.buffers["cuts"],
+                            0,
+                            bytemuck::bytes_of(&[m1, m2, 0.0, 0.0]),
+                        );
+                        let slice_range = if show_unique_slice {
+                            slice_idx..(slice_idx + 1)
+                        } else {
+                            0..num_slices
+                        };
+                        self.queue.write_buffer(
+                            &self.buffers["slice_range"],
+                            0,
+                            bytemuck::bytes_of(&[slice_range.start as f32, slice_range.end as f32, 0.0, 0.0]),
+                        );
                     });
+
+                    self.isosurface = isosurface;
+                    self.perspective = perspective;
+                    self.diffuse_color = diffuse_color;
+                    self.show_isosurface = show_isosurface;
+                    self.show_unique_slice = show_unique_slice;
+                    self.m1 = m1;
+                    self.m2 = m2;
+                    self.slice_idx = slice_idx;
+                }
+
+                self.show_options = show_options;
 
                 #[cfg(not(target_arch = "wasm32"))]
                 let screen_descriptor = egui_wgpu::ScreenDescriptor {
@@ -410,7 +598,7 @@ impl State {
         &mut self,
         reader: Cursor<R>,
     ) -> Result<(), &'static str> {
-        let (new_cube, mincut, maxcut) = read_fits(reader, &self.device, &self.queue)?;
+        let (new_cube, mincut, maxcut, dim) = read_fits(reader, &self.device, &self.queue)?;
 
         // reset the cutoff values
         self.queue.write_buffer(
@@ -418,9 +606,27 @@ impl State {
             0,
             bytemuck::bytes_of(&[mincut, maxcut, 0.0, 0.0]),
         );
+        self.queue.write_buffer(
+            &self.buffers["size"],
+            0,
+            bytemuck::bytes_of(&[dim.0 as f32, dim.1 as f32, dim.2 as f32, 0.0]),
+        );
 
-        self.mincut = mincut;
-        self.maxcut = maxcut;
+        if !self.show_unique_slice {
+            self.queue.write_buffer(
+                &self.buffers["slice_range"],
+                0,
+                bytemuck::bytes_of(&[0.0, dim.2 as f32, 0.0, 0.0]),
+            );
+        }
+
+        self.cut10 = mincut;
+        self.cut90 = maxcut;
+        // by default, set the cuts to the one precalculated
+        self.m1 = mincut;
+        self.m2 = maxcut;
+
+        self.naxis = dim;
 
         self.volumetric_renderer.set_volume(&self.device, &self.buffers, new_cube);
 
@@ -429,6 +635,7 @@ impl State {
 }
 
 use std::ops::Range;
+#[cfg(target_arch = "wasm32")]
 #[derive(Debug, Default)]
 struct Params {
     perspective: Option<bool>,
@@ -446,6 +653,7 @@ lazy_static! {
     ) = async_channel::unbounded::<Params>();
 }
 
+#[cfg(target_arch = "wasm32")]
 static mut PARAMS: Params = Params {
     perspective: None,
     cuts: None,
@@ -510,10 +718,8 @@ pub struct App {
     theta: f64,
     dtheta: f64,
     ddelta: f64,
-    dscale: f32,
-    doffset: f32,
-    scale: f32,
-    offset: f32,
+    sm1: f32,
+    sm2: f32,
 
     i: usize,
 }
@@ -542,11 +748,9 @@ impl App {
             theta: 0.0,
             dtheta: 0.0,
             ddelta: 0.0,
-            dscale: 0.0,
-            doffset: 0.0,
 
-            scale: 1.0,
-            offset: 0.0,
+            sm1: 1.0,
+            sm2: 0.0,
             i: 0,
         }
     }
@@ -620,6 +824,8 @@ impl ApplicationHandler for App {
                         0.0_f32,
                     ]),
                 );
+
+                state.perspective = perspective;
             }
 
             if let Some(cuts) = cuts {
@@ -628,6 +834,9 @@ impl ApplicationHandler for App {
                     0,
                     bytemuck::bytes_of(&[cuts.start, cuts.end, 0.0_f32, 0.0_f32]),
                 );
+
+                state.m1 = cuts.start;
+                state.m2 = cuts.end;
             }
 
             if let Some(data) = data {
@@ -738,10 +947,8 @@ impl ApplicationHandler for App {
             } => {
                 self.cuts = true;
                 self.start_cursor_pos = self.cursor_pos;
-                self.dscale = 0.0;
-                self.doffset = 0.0;
-                self.offset = self.state.as_ref().unwrap().maxcut;
-                self.scale = self.state.as_ref().unwrap().mincut;
+                self.sm1 = self.state.as_ref().unwrap().m1;
+                self.sm2 = self.state.as_ref().unwrap().m2;
             }
             WindowEvent::MouseInput {
                 state: ElementState::Released,
@@ -749,8 +956,8 @@ impl ApplicationHandler for App {
                 ..
             } => {
                 self.cuts = false;
-                self.scale = self.scale * (1.0 + self.dscale);
-                self.offset = self.offset * (1.0 + self.doffset);
+                //self.state.m1 = self.sm1 - ;
+                //self.state.m2 = self.sm2;
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_pos = position;
@@ -776,20 +983,22 @@ impl ApplicationHandler for App {
                     );
                 } else if self.cuts {
                     let dx =
-                        (self.cursor_pos.x - self.start_cursor_pos.x) / ((state.size.width as f64) * 0.5);
+                        ((self.cursor_pos.x - self.start_cursor_pos.x) as f32) / ((state.size.width as f32) * 0.5);
                     let dy =
-                        (self.cursor_pos.y - self.start_cursor_pos.y) / ((state.size.height as f64) * 0.5);
+                        ((self.cursor_pos.y - self.start_cursor_pos.y) as f32) / ((state.size.height as f32) * 0.5);
 
-                    // between 0 and 1
-                    self.dscale = dy as f32;
-                    self.doffset = dx as f32;
+                    // between -1 and 1
+
+                    let l = state.cut90 - state.cut10;
+                    state.m1 = self.sm1 + dx * l + dy * l;
+                    state.m2 = self.sm2 + dx * l - dy * l;
 
                     state.queue.write_buffer(
                         &state.buffers["cuts"],
                         0,
                         bytemuck::bytes_of(&[
-                            self.scale * (1.0 + self.dscale),
-                            self.offset * (1.0 + self.doffset),
+                            state.m1,
+                            state.m2,
                             0.0,
                             0.0,
                         ]),
@@ -818,6 +1027,9 @@ pub async fn run() {
 }
 
 fn create_window(event_loop: &ActiveEventLoop) -> Window {
+    #[cfg(not(target_arch = "wasm32"))]
+    let win_attrs = Window::default_attributes().with_title("Astronomical cube visualizer");
+    #[cfg(target_arch = "wasm32")]
     let mut win_attrs = Window::default_attributes().with_title("Astronomical cube visualizer");
 
     #[cfg(target_arch = "wasm32")]
@@ -888,22 +1100,53 @@ where
                         }
                     }
 
-                    let mincut = 0.0;
-                    let maxcut = 1.0;
-
-                    let mut data = image.raw_bytes();
+                    let data = image.raw_bytes();
 
                     let cuts = match b {
                         -32 => {
-                            use std::convert::TryInto;
                             let mut floats: Vec<f32> = data
                                 .chunks_exact(4)
                                 .map(|b| f32::from_be_bytes(b.try_into().unwrap()))
                                 .collect();
 
-                            first_and_last_percent_f32(&mut floats, 5, 95)
+                            first_and_last_percent_f32(&mut floats, 1.0, 99.0)
                         }
-                        _ => todo!()
+                        8 => {
+                            
+                            let mut bytes: Vec<u8> = data.to_vec();
+                            let range = first_and_last_percent(&mut bytes, 1.0, 99.0);
+                            (range.start as f32)..(range.end as f32)
+                        }
+                        16 => {
+                            let mut shorts: Vec<i16> = data
+                                .chunks_exact(2)
+                                .map(|b| i16::from_be_bytes(b.try_into().unwrap()))
+                                .collect();
+
+                            let range = first_and_last_percent(&mut shorts, 1.0, 99.0);
+                            (range.start as f32)..(range.end as f32)
+                        }
+                        32 => {
+                            let mut int32: Vec<i32> = data
+                                .chunks_exact(4)
+                                .map(|b| i32::from_be_bytes(b.try_into().unwrap()))
+                                .collect();
+
+                            let range = first_and_last_percent(&mut int32, 1.0, 99.0);
+                            (range.start as f32)..(range.end as f32)
+                        }
+                        64 => {
+                            let mut int64: Vec<i64> = data
+                                .chunks_exact(8)
+                                .map(|b| i64::from_be_bytes(b.try_into().unwrap()))
+                                .collect();
+
+                            let range = first_and_last_percent(&mut int64, 1.0, 99.0);
+                            (range.start as f32)..(range.end as f32)
+                        },
+                        _ => {
+                            return Err("F32, U8, I16, I32, I64 only supported");
+                        }
                     };
 
                     Ok(Cube {
@@ -928,7 +1171,7 @@ fn read_fits<R: AsRef<[u8]> + Debug>(
     reader: Cursor<R>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-) -> Result<(Texture, f32, f32), &'static str> {
+) -> Result<(Texture, f32, f32, (u32, u32, u32)), &'static str> {
     let mut fits = Fits::from_reader(reader);
     let Cube {
         data: raw_bytes,
@@ -940,15 +1183,15 @@ fn read_fits<R: AsRef<[u8]> + Debug>(
     Ok((
         Texture::from_raw_bytes::<f32>(&device, &queue, Some(raw_bytes), dim, 4, "cube")?,
         mincut,
-        maxcut
+        maxcut,
+        dim
     ))
 }
 
-use std::cmp::Ordering;
 pub fn first_and_last_percent_f32(
     slice: &mut [f32],
-    mut first_percent: i32,
-    mut last_percent: i32,
+    mut first_percent: f32,
+    mut last_percent: f32,
 ) -> Range<f32> {
     if slice.is_empty() {
         return 0.0..0.0;
@@ -976,16 +1219,12 @@ pub fn first_and_last_percent_f32(
 
     let valid = &mut slice[..valid_len];
 
-    let n = valid.len();
-    let i1 = (first_percent.clamp(0, 100) as usize * valid_len) / 100;
-    let i2 = (last_percent.clamp(0, 100) as usize * valid_len) / 100;
+    let i1 = (first_percent.clamp(0.0, 100.0) as usize * valid_len) / 100;
+    let i2 = (last_percent.clamp(0.0, 100.0) as usize * valid_len) / 100;
 
     let min_val = {
         let (_, min_val, _) =
             valid.select_nth_unstable_by(i1, |a, b| {
-                //let a = a.to_be();
-                //let b = b.to_be();
-
                 a.total_cmp(&b)
             });
         *min_val
@@ -993,13 +1232,41 @@ pub fn first_and_last_percent_f32(
     let max_val = {
         let (_, max_val, _) =
             valid.select_nth_unstable_by(i2, |a, b| {
-                //let a = a.to_be();
-                //let b = b.to_be();
-
                 a.total_cmp(&b)
             });
         *max_val
     };
+
+    min_val..max_val
+}
+
+pub fn first_and_last_percent<T>(
+    slice: &mut [T],
+    mut first_percent: f32,
+    mut last_percent: f32,
+) -> Range<T>
+where
+    T: std::cmp::Ord + cgmath::Zero + Copy
+{
+    if slice.is_empty() {
+        return T::zero()..T::zero();
+    }
+
+    if first_percent > last_percent {
+        std::mem::swap(&mut first_percent, &mut last_percent);
+    }
+
+   
+    let n = slice.len();
+    let i1 = (first_percent.clamp(0.0, 100.0) as usize * n) / 100;
+    let i2 = (last_percent.clamp(0.0, 100.0) as usize * n) / 100;
+
+    let (_, min_val, _) =
+        slice.select_nth_unstable(i1);
+    let min_val = *min_val;
+    let (_, max_val, _) =
+        slice.select_nth_unstable(i2);
+    let max_val = *max_val;
 
     min_val..max_val
 }
