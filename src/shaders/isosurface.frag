@@ -40,7 +40,10 @@ uniform Size {
 };
 layout(set = 0, binding = 11)
 uniform Slices {
-    vec4 slices;
+    vec2 sx;
+    vec2 sy;
+    vec2 sz;
+    vec2 sw;
 };
 
 vec3 lonlat2xyz(float lon, float lat) {
@@ -181,8 +184,8 @@ vec3 compute_normal(vec3 p) {
 
 void main() {
         // we define our cube as 2 bounds vertices, l and h
-    vec3 l = vec3(-0.5, -0.5, (slices.x / cube_size.z) - 0.5);
-    vec3 h = vec3(0.5, 0.5, (slices.y / cube_size.z) - 0.5);
+    vec3 l = vec3(-0.5, -0.5, (sz.x / cube_size.z) - 0.5);
+    vec3 h = vec3(0.5, 0.5, (sz.y / cube_size.z) - 0.5);
 
     vec3 cam_origin = lonlat2xyz(origin.x, origin.y);
 
@@ -227,7 +230,7 @@ void main() {
     float t_s = t_c + random * step;
     // absolute sampling point
     // scaled to the origin of the cube
-    vec3 p = p_cam + r * t_s - vec3(-0.5);
+    vec3 p = p_cam + r * t_s + vec3(0.5);
     vec3 pp = p;
     int i = 0;
     // Set v to negative infinity

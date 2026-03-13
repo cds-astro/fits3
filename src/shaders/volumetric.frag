@@ -40,7 +40,10 @@ uniform Size {
 };
 layout(set = 0, binding = 11)
 uniform Slices {
-    vec4 slices;
+    vec2 sx;
+    vec2 sy;
+    vec2 sz;
+    vec2 sw;
 };
 
 vec3 lonlat2xyz(float lon, float lat) {
@@ -170,8 +173,8 @@ float probe_cube(vec3 p) {
 
 void main() {
     // we define our cube as 2 bounds vertices, l and h
-    vec3 l = vec3(-0.5, -0.5, (slices.x / cube_size.z) - 0.5);
-    vec3 h = vec3(0.5, 0.5, (slices.y / cube_size.z) - 0.5);
+    vec3 l = vec3((sx.x / cube_size.x) - 0.5, (sy.x / cube_size.y) - 0.5, (sz.x / cube_size.z) - 0.5);
+    vec3 h = vec3((sx.y / cube_size.x) - 0.5, (sy.y / cube_size.y) - 0.5, (sz.y / cube_size.z) - 0.5);
 
     vec3 cam_origin = lonlat2xyz(origin.x, origin.y);
 
@@ -225,7 +228,7 @@ void main() {
     float t_s = t_c + step * random;
     // absolute sampling point
     // scaled to the origin of the cube
-    vec3 p = p_cam + r * t_s - vec3(-0.5);
+    vec3 p = p_cam + r * t_s + vec3(0.5);
     //int n = 1;
     int i = 0;
     while(i < num_sampling && intensity < cut.y) {

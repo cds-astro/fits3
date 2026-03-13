@@ -9,6 +9,7 @@ extern crate console_error_panic_hook;
 use std::iter;
 use std::convert::TryInto;
 use egui_double_slider::DoubleSlider;
+use fitsrs::ImgXY;
 
 
 use winit::{
@@ -56,7 +57,7 @@ const CUBES_PATH: &[&'static str] = &[
     "./cubes/DHIGLS_MG_Tb.fits",
     "./cubes/DHIGLS_PO_Tb.fits", //"./cubes/cosmo512-be.fits",
 ];
-
+use fitsrs::WCS;
 use std::collections::HashMap;
 struct State {
     surface: wgpu::Surface<'static>,
@@ -79,6 +80,8 @@ struct State {
     buffers: HashMap<&'static str, wgpu::Buffer>,
     clock: Clock,
 
+    // Cube WCS
+    wcs: Option<WCS>,
     // NAXIS of the current loaded cube
     naxis: (u32, u32, u32),
 
@@ -233,7 +236,7 @@ impl State {
             })),
             ("slice_range", device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Slice range"),
-                size: 16,
+                size: 32,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })),
@@ -285,19 +288,14 @@ impl State {
         queue.write_buffer(
             &buffers["slice_range"],
             0,
-            bytemuck::bytes_of(&[0.0 as f32, 1.0, 0.0, 0.0]),
+            bytemuck::bytes_of(&[0.0 as f32, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0]),
         );
-
 
         queue.write_buffer(
             &buffers["cam_origin"],
             0,
             bytemuck::bytes_of(&[std::f32::consts::PI, 0.0, 0.0, 0.0]),
         );
-
-
-
-
 
         let clock = Clock::now();
 
@@ -392,6 +390,7 @@ impl State {
             show_isosurface: false,
             show_options: false,
             show_unique_slice: false,
+            wcs: None,
 
             delta: 0.0,
             theta: std::f64::consts::PI,
@@ -505,10 +504,11 @@ impl State {
                     });
                 });
 
-                let l = (self.cut90 - self.cut10).abs();
-                let datamin = self.cut10 - l;
-                let datamax = self.cut90 + 5.0*l;
-                let num_slices = self.naxis.2;
+                let data_length = (self.cut90 - self.cut10).abs();
+                let datamin = self.cut10 - data_length;
+                let datamax = self.cut90 + 5.0*data_length;
+                let wcs = &self.wcs;
+
                 if show_options {
                     egui::SidePanel::left("fits3 options")
                     .resizable(true)
@@ -520,7 +520,7 @@ impl State {
                         ui.separator();
                         ui.checkbox(&mut show_unique_slice, "Slice selector");
                         ui.add_enabled_ui(show_unique_slice, |ui| {
-                            ui.add(egui::Slider::new(&mut slice_idx, 0..=num_slices).text("slice idx"));
+                            ui.add(egui::Slider::new(&mut slice_idx, 0..=naxis.2).text("slice idx"));
                         });
 
                         ui.separator();
@@ -538,19 +538,8 @@ impl State {
 
                             ui.horizontal(|ui| {
                                 ui.add(egui::Slider::new(&mut m1, datamin..=datamax).text("min cut"));
-
-                                /*ui.add(
-                                    egui::DragValue::new(&mut m1)
-                                        .range(datamin..=m2)
-                                        .speed((datamax - datamin) / 100.0)
-                                );*/
                             });
                             ui.horizontal(|ui| {
-                                /*ui.add(
-                                    egui::DragValue::new(&mut m2)
-                                        .range(m1..=datamax)
-                                        .speed((datamax - datamin) / 100.0)
-                                )*/
                                 ui.add(egui::Slider::new(&mut m2, datamin..=datamax).text("max cut"));
                             });
                         });
@@ -566,14 +555,53 @@ impl State {
                         });
                         
                         ui.separator();
+                        // freq_min, freq_max, fov, ra, dec
+                        if let Some(wcs) = wcs.as_ref() {
+                            if ui.button("select").clicked() {
+                                let x_px = ra as f64;
+                                let y_px = dec as f64;
+                                let w_px = fov as f64;
+
+                                let freq_min = freq_min / (naxis.2 as f32);
+                                let freq_max = freq_max / (naxis.2 as f32);
+
+                                let p = wcs
+                                    .unproj(&ImgXY::new(x_px, y_px))
+                                    .unwrap();
+                                let p1 = wcs
+                                    .unproj(&ImgXY::new(x_px - w_px * 0.5, y_px))
+                                    .unwrap();
+                                let p2 = wcs
+                                    .unproj(&ImgXY::new(x_px + w_px * 0.5, y_px))
+                                    .unwrap();
+
+                                #[cfg(target_arch = "wasm32")]
+                                ONSELECT.with(|f| {
+                                    if let Some(cb) = &*f.borrow() {
+                                        use js_sys::Array;
+                                        let ra_min = p1.lon().to_degrees();
+                                        let ra_max = p2.lon().to_degrees();
+                                        let ra = p.lon().to_degrees();
+                                        let dec = p.lat().to_degrees();
+
+                                        let args = Array::new();
+                                        args.push(&JsValue::from_f64(ra));
+                                        args.push(&JsValue::from_f64(dec));
+                                        args.push(&JsValue::from_f64((ra_min - ra_max).abs()));
+                                        args.push(&JsValue::from_f64(freq_min as f64));
+                                        args.push(&JsValue::from_f64(freq_max as f64));
+                                        cb.apply(&JsValue::NULL, &args).unwrap();
+                                    }
+                                });
+                            }
+                        }
+
+                        ui.separator();
 
                         // Viewport scope
                         ui.label("Viewport");
                         ui.checkbox(&mut perspective, "Perspective");
 
-                        
-                        
-                        
                         if ui.button("RA Dec (Front)").clicked() {
                             new_view = Some((std::f32::consts::PI, 0.0));
                         }
@@ -612,15 +640,6 @@ impl State {
 
                         ui.add(egui::Slider::new(&mut dec, 0.0..=naxis.1 as f32).text("Select dec"));
 
-
-
-
-
-
-
-
-
-
                         self.queue.write_buffer(
                             &self.buffers["isosurface"],
                             0,
@@ -641,18 +660,33 @@ impl State {
                             0,
                             bytemuck::bytes_of(&[m1, m2, 0.0, 0.0]),
                         );
-                        let slice_range = if show_unique_slice {
-                            slice_idx..(slice_idx + 1)
+
+                        let (sx, sy, sz) = if show_unique_slice {
+                            (
+                                0.0..(naxis.0 as f32),
+                                0.0..(naxis.1 as f32),
+                                (slice_idx as f32)..(slice_idx as f32 + 1.0)
+                            )
                         } else {
-                            0..num_slices
+                            // in normal mode
+                            (
+                                (ra - fov * 0.5)..(ra + fov * 0.5),
+                                (dec - fov * 0.5)..(dec + fov * 0.5),
+                                (freq_min as f32)..(freq_max as f32)
+                            )
                         };
+
                         self.queue.write_buffer(
                             &self.buffers["slice_range"],
                             0,
-                            bytemuck::bytes_of(&[slice_range.start as f32, slice_range.end as f32, 0.0, 0.0]),
+                            bytemuck::bytes_of(&[
+                                sx.start as f32, sx.end as f32,
+                                sy.start as f32, sy.end as f32,
+                                sz.start as f32, sz.end as f32,
+                                0.0, 0.0
+                            ]),
                         );
                     });
-
 
                     if let Some((theta,delta)) = new_view {
                         self.theta = theta as f64;
@@ -666,16 +700,6 @@ impl State {
                             bytemuck::bytes_of(&[theta, delta, 0.0, 0.0]),
                         );
                     }
-
-
-
-
-
-
-
-
-
-
 
                     self.isosurface = isosurface;
                     self.perspective = perspective;
@@ -728,7 +752,7 @@ impl State {
         &mut self,
         reader: Cursor<R>,
     ) -> Result<(), &'static str> {
-        let (new_cube, mincut, maxcut, dim) = read_fits(reader, &self.device, &self.queue)?;
+        let (new_cube, mincut, maxcut, dim, wcs) = read_fits(reader, &self.device, &self.queue)?;
 
         // reset the cutoff values
         self.queue.write_buffer(
@@ -742,11 +766,22 @@ impl State {
             bytemuck::bytes_of(&[dim.0 as f32, dim.1 as f32, dim.2 as f32, 0.0]),
         );
 
+        self.ra = (dim.0 as f32) * 0.5;
+        self.dec = (dim.1 as f32) * 0.5;
+        self.freq_min = 0.0;
+        self.freq_max = dim.2 as f32;
+        self.fov = dim.0 as f32; // todo
+
         if !self.show_unique_slice {
             self.queue.write_buffer(
                 &self.buffers["slice_range"],
                 0,
-                bytemuck::bytes_of(&[0.0, dim.2 as f32, 0.0, 0.0]),
+                bytemuck::bytes_of(&[
+                    0.0, dim.0 as f32,
+                    0.0, dim.1 as f32,
+                    0.0, dim.2 as f32,
+                    0.0, 0.0
+                ]),
             );
         }
 
@@ -757,6 +792,7 @@ impl State {
         self.m2 = maxcut;
 
         self.naxis = dim;
+        self.wcs = Some(wcs);
 
         self.volumetric_renderer.set_volume(&self.device, &self.buffers, new_cube);
 
@@ -771,6 +807,13 @@ struct Params {
     perspective: Option<bool>,
     cuts: Option<Range<f32>>,
     data: Option<Vec<u8>>,
+}
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    #[cfg(target_arch = "wasm32")]
+    static ONSELECT: std::cell::RefCell<Option<js_sys::Function>> =
+        std::cell::RefCell::new(None);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -816,6 +859,14 @@ pub fn normalize(min: f32, max: f32) {
             })
             .await
             .unwrap();
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = "onselect")]
+pub fn onselect(func: js_sys::Function) {
+    ONSELECT.with(|f| {
+        *f.borrow_mut() = Some(func);
     });
 }
 
@@ -933,6 +984,7 @@ impl ApplicationHandler for App {
                 perspective,
                 cuts,
                 data,
+                ..
             } = params;
 
             if let Some(perspective) = perspective {
@@ -1295,6 +1347,7 @@ struct Cube<'a> {
     dim: (u32, u32, u32),
     mincut: f32,
     maxcut: f32,
+    wcs: fitsrs::WCS
 }
 
 fn parse_fits_data_cube<'a, R>(fits: &'a mut Fits<Cursor<R>>) -> Result<Cube<'a>, &'static str>
@@ -1379,11 +1432,13 @@ where
                         }
                     };
 
+                    let wcs = hdu.wcs().map_err(|_| "wcs not found")?;
                     Ok(Cube {
                         data,
                         dim: (d1, d2, d3),
                         mincut: cuts.start,
-                        maxcut: cuts.end
+                        maxcut: cuts.end,
+                        wcs
                     })
                 } else {
                     Err("FITS image extension not found")
@@ -1401,20 +1456,22 @@ fn read_fits<R: AsRef<[u8]> + Debug>(
     reader: Cursor<R>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-) -> Result<(Texture, f32, f32, (u32, u32, u32)), &'static str> {
+) -> Result<(Texture, f32, f32, (u32, u32, u32), fitsrs::WCS), &'static str> {
     let mut fits = Fits::from_reader(reader);
     let Cube {
         data: raw_bytes,
         dim,
         mincut,
-        maxcut
+        maxcut,
+        wcs
     } = parse_fits_data_cube(&mut fits)?;
 
     Ok((
         Texture::from_raw_bytes::<f32>(&device, &queue, Some(raw_bytes), dim, 4, "cube")?,
         mincut,
         maxcut,
-        dim
+        dim,
+        wcs
     ))
 }
 

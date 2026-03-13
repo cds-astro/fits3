@@ -80,6 +80,11 @@
             fits3.normalize(min, max);
         });
 
+        fits3.onselect((...args) => {
+
+          console.log("selection done: ", args)
+        })
+
         // fetch a default cube
        /* fetch("https://alasky.cds.unistra.fr/hips-cube-services/hips2fits3d?hips=CDS%2FC%2FLGLBSHI16&width=500&height=500&fov=4&projection=SIN&coordsys=icrs&object=M31&format=fits")
           .then((resp) => resp.arrayBuffer())

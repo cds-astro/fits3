@@ -161,7 +161,7 @@ impl VolumetricRenderer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
+                            (std::mem::size_of::<f32>() * 8) as wgpu::BufferAddress,
                         ),
                     },
                     count: None,
@@ -263,7 +263,7 @@ impl VolumetricRenderer {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["slice_range"],
                         offset: 0,
-                        size: wgpu::BufferSize::new(16),
+                        size: wgpu::BufferSize::new(32),
                     }),
                 },
             ],
@@ -520,7 +520,7 @@ impl VolumetricRenderer {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["slice_range"],
                         offset: 0,
-                        size: wgpu::BufferSize::new(16),
+                        size: wgpu::BufferSize::new(32),
                     }),
                 },
             ],
