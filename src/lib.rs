@@ -552,27 +552,27 @@ impl State {
                         
                         
                         
-                        if ui.button("Reset/Front View").clicked() {
+                        if ui.button("RA Dec (Front)").clicked() {
                             new_view = Some((std::f32::consts::PI, 0.0));
                         }
 
-                        if ui.button("Back View").clicked() {
+                        if ui.button("-RA Dec (Back)").clicked() {
                             new_view = Some((0.0, 0.0));
                         }
 
-                        if ui.button("Left View").clicked() {
+                        if ui.button("-Freq Dec (Left)").clicked() {
                             new_view = Some((-std::f32::consts::PI/2.0, 0.0));
                         }
 
-                        if ui.button("Right View").clicked() {
+                        if ui.button("Freq Dec (Right)").clicked() {
                             new_view = Some((std::f32::consts::PI/2.0, 0.0));
                         }
 
-                        if ui.button("Top View").clicked() {
+                        if ui.button("RA Freq (Top)").clicked() {
                             new_view = Some((std::f32::consts::PI, std::f32::consts::PI * 0.5 - 1e-3));
                         }
 
-                        if ui.button("Bottom View").clicked() {
+                        if ui.button("RA -Freq (Bottom)").clicked() {
                             new_view = Some((std::f32::consts::PI, -std::f32::consts::PI * 0.5 + 1e-3));
                         }
 
