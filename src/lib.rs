@@ -91,6 +91,13 @@ struct State {
     m1: f32,
     // current max cut
     m2: f32,
+
+    freq_min: f32,
+    freq_max: f32,
+    fov: f32,
+    ra: f32,
+    dec: f32,
+
     // isosurface value
     isosurface: f32,
     // a diffuse color to show the isosurface with
@@ -371,6 +378,13 @@ impl State {
             cut90: 1.0,
             m1: 0.0,
             m2: 1.0,
+
+            freq_min: 0.0,
+            freq_max: 100.0,
+            fov: 5.0,
+            ra: 50.0,
+            dec: 50.0,
+
             perspective: false,
             isosurface: 0.0,
             slice_idx: 0,
@@ -474,6 +488,14 @@ impl State {
                 let mut show_unique_slice = self.show_unique_slice;
                 let mut m1 = self.m1;
                 let mut m2 = self.m2;
+
+                let mut freq_min = self.freq_min;
+                let mut freq_max = self.freq_max;
+                let mut fov = self.fov;
+                let mut ra = self.ra;
+                let mut dec = self.dec;
+                let naxis = &self.naxis;
+
                 let mut slice_idx = self.slice_idx;
 
                 egui::TopBottomPanel::top("top_bar").show(self.egui_renderer.context(), |ui| {
@@ -576,7 +598,19 @@ impl State {
                             new_view = Some((std::f32::consts::PI, -std::f32::consts::PI * 0.5 + 1e-3));
                         }
 
+                        ui.label("Select a frequency range");
+                        ui.add_sized(
+                            [ui.available_width(), 0.0],
+                            DoubleSlider::new(&mut freq_min, &mut freq_max, 0.0..=naxis.2 as f32)
+                                .width(ui.available_width())
+                                //.separation_distance((datamax - datamin) / 100.0)
+                        );
 
+                        ui.add(egui::Slider::new(&mut fov, 0.0..=naxis.0 as f32).text("Select fov"));
+
+                        ui.add(egui::Slider::new(&mut ra, 0.0..=naxis.0 as f32).text("Select ra"));
+
+                        ui.add(egui::Slider::new(&mut dec, 0.0..=naxis.1 as f32).text("Select dec"));
 
 
 
@@ -650,6 +684,13 @@ impl State {
                     self.show_unique_slice = show_unique_slice;
                     self.m1 = m1;
                     self.m2 = m2;
+
+                    self.freq_min = freq_min;
+                    self.freq_max = freq_max;
+                    self.fov = fov;
+                    self.ra = ra;
+                    self.dec = dec;
+
                     self.slice_idx = slice_idx;
                 }
 
