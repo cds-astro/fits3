@@ -506,276 +506,277 @@ impl State {
                 let naxis = &self.naxis;
                 let mut show_moment0_window = self.show_moment0_window;
                 let mut moment0_texture = &mut self.moment0_texture;
-                let cube = self.cube.as_ref().unwrap();
-                let wcs = &cube.wcs;
-                let queue = &self.queue;
+                if let Some(cube) = self.cube.as_ref() {
+                    let wcs = &cube.wcs;
+                    let queue = &self.queue;
 
-                let mut slice_idx = self.slice_idx;
+                    let mut slice_idx = self.slice_idx;
 
-                egui::TopBottomPanel::top("top_bar").show(self.egui_renderer.context(), |ui| {
-                    ui.horizontal(|ui| {
-                        ui.heading("WebGPU 3D FITS viewer");
-                        ui.checkbox(&mut show_options, "Show options");
+                    egui::TopBottomPanel::top("top_bar").show(self.egui_renderer.context(), |ui| {
+                        ui.horizontal(|ui| {
+                            ui.heading("WebGPU 3D FITS viewer");
+                            ui.checkbox(&mut show_options, "Show options");
+                        });
                     });
-                });
 
-                let data_length = (self.max_cut_default - self.min_cut_default).abs();
-                let datamin = self.min_cut_default - data_length;
-                let datamax = self.max_cut_default + 5.0*data_length;
+                    let data_length = (self.max_cut_default - self.min_cut_default).abs();
+                    let datamin = self.min_cut_default - data_length;
+                    let datamax = self.max_cut_default + 5.0*data_length;
 
-                let ctx = self.egui_renderer.context();
-                let buffers = &self.buffers;
+                    let ctx = self.egui_renderer.context();
+                    let buffers = &self.buffers;
 
-                if show_options {
-                    egui::SidePanel::left("fits3 options")
-                    .resizable(true)
-                    .show(ctx, |ui| {
-                        // Volumetric scope
-                        ui.add_enabled_ui(!show_isosurface, |ui| {
-                            ui.label("Cutout parameters");
+                    if show_options {
+                        egui::SidePanel::left("fits3 options")
+                        .resizable(true)
+                        .show(ctx, |ui| {
+                            // Volumetric scope
+                            ui.add_enabled_ui(!show_isosurface, |ui| {
+                                ui.label("Cutout parameters");
+                                ui.add_sized(
+                                    [ui.available_width(), 0.0],
+                                    DoubleSlider::new(&mut min_cut, &mut max_cut, datamin..=datamax)
+                                        .width(ui.available_width())
+                                        .scroll_factor((datamax - datamin) / 100.0)
+                                        .separation_distance((datamax - datamin) / 100.0)
+                                );
+
+                                ui.horizontal(|ui| {
+                                    ui.add(egui::Slider::new(&mut min_cut, datamin..=datamax).text("min cut"));
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.add(egui::Slider::new(&mut max_cut, datamin..=datamax).text("max cut"));
+                                });
+                                if ui.button("Reset cuts").clicked() {
+                                    min_cut = min_cut_default;
+                                    max_cut = max_cut_default;
+                                }
+                            });
+                            
+                            ui.separator();
+
+                            // Isosurface scope
+                            ui.checkbox(&mut show_isosurface, "Show isosurface");
+                            ui.add_enabled_ui(show_isosurface, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.add(egui::Slider::new(&mut isosurface, min_cut_default..=max_cut_default).text("isovalue"));
+                                    ui.color_edit_button_rgba_unmultiplied(&mut diffuse_color);
+                                })
+                            });
+
+                            ui.separator();
+
+                            // Viewport scope
+                            ui.label("Viewport");
+                            ui.checkbox(&mut perspective, "Perspective");
+
+                            if ui.button("RA Dec (Front)").clicked() {
+                                new_view = Some((std::f32::consts::PI, 0.0));
+                            }
+
+                            if ui.button("-RA Dec (Back)").clicked() {
+                                new_view = Some((0.0, 0.0));
+                            }
+
+                            if ui.button("-V Dec (Left)").clicked() {
+                                new_view = Some((-std::f32::consts::PI/2.0, 0.0));
+                            }
+
+                            if ui.button("V Dec (Right)").clicked() {
+                                new_view = Some((std::f32::consts::PI/2.0, 0.0));
+                            }
+
+                            if ui.button("RA V (Top)").clicked() {
+                                new_view = Some((std::f32::consts::PI, std::f32::consts::PI * 0.5 - 1e-3));
+                            }
+
+                            if ui.button("RA -V (Bottom)").clicked() {
+                                new_view = Some((std::f32::consts::PI, -std::f32::consts::PI * 0.5 + 1e-3));
+                            }
+
+                            ui.separator();
+
+                            ui.checkbox(&mut show_unique_slice, "Slice selector");
+                            ui.add_enabled_ui(show_unique_slice, |ui| {
+                                ui.add(egui::Slider::new(&mut slice_idx, 0..=naxis.2).text("slice idx"));
+                            });
+
+                            ui.separator();
+
+                            ui.label("Select a frequency range");
                             ui.add_sized(
                                 [ui.available_width(), 0.0],
-                                DoubleSlider::new(&mut min_cut, &mut max_cut, datamin..=datamax)
+                                DoubleSlider::new(&mut freq_min, &mut freq_max, 0.0..=naxis.2 as f32)
                                     .width(ui.available_width())
-                                    .scroll_factor((datamax - datamin) / 100.0)
-                                    .separation_distance((datamax - datamin) / 100.0)
+                                    //.separation_distance((datamax - datamin) / 100.0)
                             );
 
-                            ui.horizontal(|ui| {
-                                ui.add(egui::Slider::new(&mut min_cut, datamin..=datamax).text("min cut"));
-                            });
-                            ui.horizontal(|ui| {
-                                ui.add(egui::Slider::new(&mut max_cut, datamin..=datamax).text("max cut"));
-                            });
-                            if ui.button("Reset cuts").clicked() {
-                                min_cut = min_cut_default;
-                                max_cut = max_cut_default;
-                            }
-                        });
-                        
-                        ui.separator();
+                            ui.add(egui::Slider::new(&mut fov, 0.0..=naxis.0 as f32).text("Select FoV"));
+                            ui.add(egui::Slider::new(&mut ra, 0.0..=naxis.0 as f32).text("Select RA"));
+                            ui.add(egui::Slider::new(&mut dec, 0.0..=naxis.1 as f32).text("Select Dec"));
 
-                        // Isosurface scope
-                        ui.checkbox(&mut show_isosurface, "Show isosurface");
-                        ui.add_enabled_ui(show_isosurface, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.add(egui::Slider::new(&mut isosurface, min_cut_default..=max_cut_default).text("isovalue"));
-                                ui.color_edit_button_rgba_unmultiplied(&mut diffuse_color);
-                            })
-                        });
+                            // freq_min, freq_max, fov, ra, dec
+                            if ui.button("Select").clicked() {
+                                let x_px = ra as f64;
+                                let y_px = dec as f64;
+                                let w_px = fov as f64;
 
-                        ui.separator();
+                                let freq_min = freq_min / (naxis.2 as f32);
+                                let freq_max = freq_max / (naxis.2 as f32);
 
-                        // Viewport scope
-                        ui.label("Viewport");
-                        ui.checkbox(&mut perspective, "Perspective");
+                                let p = cube
+                                    .wcs
+                                    .unproj(&ImgXY::new(x_px, y_px))
+                                    .unwrap();
+                                let p1 = cube
+                                    .wcs
+                                    .unproj(&ImgXY::new(x_px - w_px * 0.5, y_px))
+                                    .unwrap();
+                                let p2 = cube
+                                    .wcs
+                                    .unproj(&ImgXY::new(x_px + w_px * 0.5, y_px))
+                                    .unwrap();
 
-                        if ui.button("RA Dec (Front)").clicked() {
-                            new_view = Some((std::f32::consts::PI, 0.0));
-                        }
+                                let fov = cube
+                                    .wcs.field_of_view().0 * ((w_px as f64) / (naxis.0 as f64));
 
-                        if ui.button("-RA Dec (Back)").clicked() {
-                            new_view = Some((0.0, 0.0));
-                        }
+                                #[cfg(target_arch = "wasm32")]
+                                ONSELECT.with(|f| {
+                                    if let Some(cb) = &*f.borrow() {
+                                        use js_sys::Array;
+                                        let ra_min = p1.lon().to_degrees();
+                                        let ra_max = p2.lon().to_degrees();
+                                        let ra = p.lon().to_degrees();
+                                        let dec = p.lat().to_degrees();
 
-                        if ui.button("-V Dec (Left)").clicked() {
-                            new_view = Some((-std::f32::consts::PI/2.0, 0.0));
-                        }
-
-                        if ui.button("V Dec (Right)").clicked() {
-                            new_view = Some((std::f32::consts::PI/2.0, 0.0));
-                        }
-
-                        if ui.button("RA V (Top)").clicked() {
-                            new_view = Some((std::f32::consts::PI, std::f32::consts::PI * 0.5 - 1e-3));
-                        }
-
-                        if ui.button("RA -V (Bottom)").clicked() {
-                            new_view = Some((std::f32::consts::PI, -std::f32::consts::PI * 0.5 + 1e-3));
-                        }
-
-                        ui.separator();
-
-                        ui.checkbox(&mut show_unique_slice, "Slice selector");
-                        ui.add_enabled_ui(show_unique_slice, |ui| {
-                            ui.add(egui::Slider::new(&mut slice_idx, 0..=naxis.2).text("slice idx"));
-                        });
-
-                        ui.separator();
-
-                        ui.label("Select a frequency range");
-                        ui.add_sized(
-                            [ui.available_width(), 0.0],
-                            DoubleSlider::new(&mut freq_min, &mut freq_max, 0.0..=naxis.2 as f32)
-                                .width(ui.available_width())
-                                //.separation_distance((datamax - datamin) / 100.0)
-                        );
-
-                        ui.add(egui::Slider::new(&mut fov, 0.0..=naxis.0 as f32).text("Select FoV"));
-                        ui.add(egui::Slider::new(&mut ra, 0.0..=naxis.0 as f32).text("Select RA"));
-                        ui.add(egui::Slider::new(&mut dec, 0.0..=naxis.1 as f32).text("Select Dec"));
-
-                        // freq_min, freq_max, fov, ra, dec
-                        if ui.button("Select").clicked() {
-                            let x_px = ra as f64;
-                            let y_px = dec as f64;
-                            let w_px = fov as f64;
-
-                            let freq_min = freq_min / (naxis.2 as f32);
-                            let freq_max = freq_max / (naxis.2 as f32);
-
-                            let p = cube
-                                .wcs
-                                .unproj(&ImgXY::new(x_px, y_px))
-                                .unwrap();
-                            let p1 = cube
-                                .wcs
-                                .unproj(&ImgXY::new(x_px - w_px * 0.5, y_px))
-                                .unwrap();
-                            let p2 = cube
-                                .wcs
-                                .unproj(&ImgXY::new(x_px + w_px * 0.5, y_px))
-                                .unwrap();
-
-                            let fov = cube
-                                .wcs.field_of_view().0 * ((w_px as f64) / (naxis.0 as f64));
-
-                            #[cfg(target_arch = "wasm32")]
-                            ONSELECT.with(|f| {
-                                if let Some(cb) = &*f.borrow() {
-                                    use js_sys::Array;
-                                    let ra_min = p1.lon().to_degrees();
-                                    let ra_max = p2.lon().to_degrees();
-                                    let ra = p.lon().to_degrees();
-                                    let dec = p.lat().to_degrees();
-
-                                    let args = Array::new();
-                                    args.push(&JsValue::from_f64(ra));
-                                    args.push(&JsValue::from_f64(dec));
-                                    args.push(&JsValue::from_f64(fov));
-                                    args.push(&JsValue::from_f64(freq_min as f64));
-                                    args.push(&JsValue::from_f64(freq_max as f64));
-                                    cb.apply(&JsValue::NULL, &args).unwrap();
-                                }
-                            });
-                        }
-
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            if ui.button("Moment 0").clicked() {
-                                if moment0_texture.is_none() {
-                                    let image = moment::compute_moment0(&cube);
-
-                                    let tex = ctx
-                                        .load_texture(
-                                            "moment0",
-                                            egui::ColorImage::from_rgba_unmultiplied([naxis.0 as usize, naxis.1 as usize], &image),
-                                            egui::TextureOptions::NEAREST,
-                                        );
-
-                                    *moment0_texture = Some(tex);
-                                }
-                                show_moment0_window = true;
-                            }
-
-                            if ui.button("Moment 1").clicked() {
-                                
-                            }
-                            if ui.button("Moment 2").clicked() {
-                                
-                            }
-                        });
-
-                        if show_moment0_window {
-                            egui::Window::new("Moment 0")
-                                .open(&mut show_moment0_window)
-                                .show(ctx, |ui| {
-                                    if let Some(tex) = &moment0_texture {
-                                        let size = tex.size_vec2();
-
-                                        ui.image((tex.id(), size));
+                                        let args = Array::new();
+                                        args.push(&JsValue::from_f64(ra));
+                                        args.push(&JsValue::from_f64(dec));
+                                        args.push(&JsValue::from_f64(fov));
+                                        args.push(&JsValue::from_f64(freq_min as f64));
+                                        args.push(&JsValue::from_f64(freq_max as f64));
+                                        cb.apply(&JsValue::NULL, &args).unwrap();
                                     }
                                 });
+                            }
+
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                if ui.button("Moment 0").clicked() {
+                                    if moment0_texture.is_none() {
+                                        let image = moment::compute_moment0(&cube);
+
+                                        let tex = ctx
+                                            .load_texture(
+                                                "moment0",
+                                                egui::ColorImage::from_rgba_unmultiplied([naxis.0 as usize, naxis.1 as usize], &image),
+                                                egui::TextureOptions::NEAREST,
+                                            );
+
+                                        *moment0_texture = Some(tex);
+                                    }
+                                    show_moment0_window = true;
+                                }
+
+                                if ui.button("Moment 1").clicked() {
+                                    
+                                }
+                                if ui.button("Moment 2").clicked() {
+                                    
+                                }
+                            });
+
+                            if show_moment0_window {
+                                egui::Window::new("Moment 0")
+                                    .open(&mut show_moment0_window)
+                                    .show(ctx, |ui| {
+                                        if let Some(tex) = &moment0_texture {
+                                            let size = tex.size_vec2();
+
+                                            ui.image((tex.id(), size));
+                                        }
+                                    });
+                            }
+
+                            queue.write_buffer(
+                                &buffers["isosurface"],
+                                0,
+                                bytemuck::bytes_of(&[isosurface, 0.0, 0.0, 0.0]),
+                            );
+                            queue.write_buffer(
+                                &buffers["perspective"],
+                                0,
+                                bytemuck::bytes_of(&[if perspective { 1.0_f32 } else { 0.0_f32 }, 0.0, 0.0, 0.0]),
+                            );
+                            queue.write_buffer(
+                                &buffers["diffuse_color"],
+                                0,
+                                bytemuck::bytes_of(&diffuse_color),
+                            );
+                            queue.write_buffer(
+                                &buffers["cuts"],
+                                0,
+                                bytemuck::bytes_of(&[min_cut, max_cut, 0.0, 0.0]),
+                            );
+
+                            let (sx, sy, sz) = if show_unique_slice {
+                                (
+                                    0.0..(naxis.0 as f32),
+                                    0.0..(naxis.1 as f32),
+                                    (slice_idx as f32)..(slice_idx as f32 + 1.0)
+                                )
+                            } else {
+                                // in normal mode
+                                (
+                                    (ra - fov * 0.5)..(ra + fov * 0.5),
+                                    (dec - fov * 0.5)..(dec + fov * 0.5),
+                                    (freq_min as f32)..(freq_max as f32)
+                                )
+                            };
+
+                            queue.write_buffer(
+                                &buffers["slice_range"],
+                                0,
+                                bytemuck::bytes_of(&[
+                                    sx.start as f32, sx.end as f32,
+                                    sy.start as f32, sy.end as f32,
+                                    sz.start as f32, sz.end as f32,
+                                    0.0, 0.0
+                                ]),
+                            );
+                        });
+
+                        if let Some((theta, delta)) = new_view {
+                            self.theta = theta as f64;
+                            self.delta = delta as f64;
+                            self.dtheta = 0.0;
+                            self.ddelta = 0.0;
+                            
+                            self.queue.write_buffer(
+                                &self.buffers["cam_origin"],
+                                0,
+                                bytemuck::bytes_of(&[theta, delta, 0.0, 0.0]),
+                            );
                         }
 
-                        queue.write_buffer(
-                            &buffers["isosurface"],
-                            0,
-                            bytemuck::bytes_of(&[isosurface, 0.0, 0.0, 0.0]),
-                        );
-                        queue.write_buffer(
-                            &buffers["perspective"],
-                            0,
-                            bytemuck::bytes_of(&[if perspective { 1.0_f32 } else { 0.0_f32 }, 0.0, 0.0, 0.0]),
-                        );
-                        queue.write_buffer(
-                            &buffers["diffuse_color"],
-                            0,
-                            bytemuck::bytes_of(&diffuse_color),
-                        );
-                        queue.write_buffer(
-                            &buffers["cuts"],
-                            0,
-                            bytemuck::bytes_of(&[min_cut, max_cut, 0.0, 0.0]),
-                        );
+                        self.isosurface = isosurface;
+                        self.perspective = perspective;
+                        self.diffuse_color = diffuse_color;
+                        self.show_isosurface = show_isosurface;
+                        self.show_unique_slice = show_unique_slice;
+                        self.min_cut = min_cut;
+                        self.max_cut = max_cut;
 
-                        let (sx, sy, sz) = if show_unique_slice {
-                            (
-                                0.0..(naxis.0 as f32),
-                                0.0..(naxis.1 as f32),
-                                (slice_idx as f32)..(slice_idx as f32 + 1.0)
-                            )
-                        } else {
-                            // in normal mode
-                            (
-                                (ra - fov * 0.5)..(ra + fov * 0.5),
-                                (dec - fov * 0.5)..(dec + fov * 0.5),
-                                (freq_min as f32)..(freq_max as f32)
-                            )
-                        };
+                        self.freq_min = freq_min;
+                        self.freq_max = freq_max;
+                        self.fov = fov;
+                        self.ra = ra;
+                        self.dec = dec;
 
-                        queue.write_buffer(
-                            &buffers["slice_range"],
-                            0,
-                            bytemuck::bytes_of(&[
-                                sx.start as f32, sx.end as f32,
-                                sy.start as f32, sy.end as f32,
-                                sz.start as f32, sz.end as f32,
-                                0.0, 0.0
-                            ]),
-                        );
-                    });
+                        self.slice_idx = slice_idx;
 
-                    if let Some((theta, delta)) = new_view {
-                        self.theta = theta as f64;
-                        self.delta = delta as f64;
-                        self.dtheta = 0.0;
-                        self.ddelta = 0.0;
-                        
-                        self.queue.write_buffer(
-                            &self.buffers["cam_origin"],
-                            0,
-                            bytemuck::bytes_of(&[theta, delta, 0.0, 0.0]),
-                        );
+                        self.show_moment0_window = show_moment0_window;
                     }
-
-                    self.isosurface = isosurface;
-                    self.perspective = perspective;
-                    self.diffuse_color = diffuse_color;
-                    self.show_isosurface = show_isosurface;
-                    self.show_unique_slice = show_unique_slice;
-                    self.min_cut = min_cut;
-                    self.max_cut = max_cut;
-
-                    self.freq_min = freq_min;
-                    self.freq_max = freq_max;
-                    self.fov = fov;
-                    self.ra = ra;
-                    self.dec = dec;
-
-                    self.slice_idx = slice_idx;
-
-                    self.show_moment0_window = show_moment0_window;
                 }
 
                 self.show_options = show_options;
@@ -1003,14 +1004,14 @@ impl App {
         )
         .await;
 
-        #[cfg(not(target_arch = "wasm32"))]
+        /*#[cfg(not(target_arch = "wasm32"))]
         {
             let file = File::open(&CUBES_PATH[0]).unwrap();
             let mmap = unsafe { Mmap::map(&file).unwrap() };
 
             let reader = Cursor::new(mmap);
             let _ = state.visualize_cube(reader);
-        }
+        }*/
 
         self.window.get_or_insert(window);
         self.state.get_or_insert(state);
