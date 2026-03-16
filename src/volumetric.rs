@@ -429,7 +429,7 @@ impl VolumetricRenderer {
         }
     }
 
-    pub(crate) fn set_volume(&mut self, device: &wgpu::Device, buffers: &HashMap<&'static str, wgpu::Buffer>, volume: Texture) {
+    pub(crate) fn set_volume(&mut self, device: &wgpu::Device, buffers: &HashMap<&'static str, wgpu::Buffer>, volume: &Texture) {
         self.diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &self.texture_bind_group_layout,
             entries: &[

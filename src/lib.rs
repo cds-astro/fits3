@@ -27,6 +27,7 @@ mod time;
 mod vertex;
 mod volumetric;
 mod selector;
+mod moment;
 use fitsrs::card::Value;
 use fitsrs::HDU;
 
@@ -80,20 +81,18 @@ struct State {
     buffers: HashMap<&'static str, wgpu::Buffer>,
     clock: Clock,
 
-    // Cube WCS
-    wcs: Option<WCS>,
     // NAXIS of the current loaded cube
     naxis: (u32, u32, u32),
 
     /// Cuts properties
     // min cut precomputed corresponding to the first 1% of data 
-    cut10: f32,
+    min_cut_default: f32,
     // max cut precomputed corresponding to the last 99% of data
-    cut90: f32,
+    max_cut_default: f32,
     // current min cut
-    m1: f32,
+    min_cut: f32,
     // current max cut
-    m2: f32,
+    max_cut: f32,
 
     freq_min: f32,
     freq_max: f32,
@@ -115,6 +114,13 @@ struct State {
     show_options: bool,
     show_unique_slice: bool,
 
+
+    // The cube real data
+    cube: Option<Cube>,
+
+    // moment 0 state
+    show_moment0_window: bool,
+    moment0_texture: Option<egui::TextureHandle>,
 
     delta: f64,
     theta: f64,
@@ -372,10 +378,10 @@ impl State {
 
             naxis: (1, 1, 1),
 
-            cut10: 0.0,
-            cut90: 1.0,
-            m1: 0.0,
-            m2: 1.0,
+            min_cut_default: 0.0,
+            max_cut_default: 1.0,
+            min_cut: 0.0,
+            max_cut: 1.0,
 
             freq_min: 0.0,
             freq_max: 100.0,
@@ -390,7 +396,7 @@ impl State {
             show_isosurface: false,
             show_options: false,
             show_unique_slice: false,
-            wcs: None,
+            cube: None,
 
             delta: 0.0,
             theta: std::f64::consts::PI,
@@ -400,7 +406,11 @@ impl State {
             clock,
             egui_renderer,
             volumetric_renderer,
-            selector_renderer
+            selector_renderer,
+
+            // Moment0 window state
+            show_moment0_window: false,
+            moment0_texture: None,
         }
     }
 
@@ -448,9 +458,7 @@ impl State {
     }
 
     fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
-
         let mut new_view: Option<(f32, f32)> = None;
-        
 
         let size = window.inner_size();
         if size.width == 0 || size.height == 0 {
@@ -485,8 +493,10 @@ impl State {
                 let mut show_isosurface = self.show_isosurface;
                 let mut show_options = self.show_options;
                 let mut show_unique_slice = self.show_unique_slice;
-                let mut m1 = self.m1;
-                let mut m2 = self.m2;
+                let mut min_cut = self.min_cut;
+                let mut max_cut = self.max_cut;
+                let min_cut_default = self.min_cut_default;
+                let max_cut_default = self.max_cut_default;
 
                 let mut freq_min = self.freq_min;
                 let mut freq_max = self.freq_max;
@@ -494,6 +504,11 @@ impl State {
                 let mut ra = self.ra;
                 let mut dec = self.dec;
                 let naxis = &self.naxis;
+                let mut show_moment0_window = self.show_moment0_window;
+                let mut moment0_texture = &mut self.moment0_texture;
+                let cube = self.cube.as_ref().unwrap();
+                let wcs = &cube.wcs;
+                let queue = &self.queue;
 
                 let mut slice_idx = self.slice_idx;
 
@@ -504,97 +519,50 @@ impl State {
                     });
                 });
 
-                let data_length = (self.cut90 - self.cut10).abs();
-                let datamin = self.cut10 - data_length;
-                let datamax = self.cut90 + 5.0*data_length;
-                let wcs = &self.wcs;
+                let data_length = (self.max_cut_default - self.min_cut_default).abs();
+                let datamin = self.min_cut_default - data_length;
+                let datamax = self.max_cut_default + 5.0*data_length;
+
+                let ctx = self.egui_renderer.context();
+                let buffers = &self.buffers;
 
                 if show_options {
                     egui::SidePanel::left("fits3 options")
                     .resizable(true)
-                    .show(self.egui_renderer.context(), |ui| {
-                        // rendering scope
-                        ui.label("Mode");
-                        ui.checkbox(&mut show_isosurface, "Show isosurface");
-
-                        ui.separator();
-                        ui.checkbox(&mut show_unique_slice, "Slice selector");
-                        ui.add_enabled_ui(show_unique_slice, |ui| {
-                            ui.add(egui::Slider::new(&mut slice_idx, 0..=naxis.2).text("slice idx"));
-                        });
-
-                        ui.separator();
-
+                    .show(ctx, |ui| {
                         // Volumetric scope
                         ui.add_enabled_ui(!show_isosurface, |ui| {
-                            ui.label("Maximum Intensity Projection");
+                            ui.label("Cutout parameters");
                             ui.add_sized(
                                 [ui.available_width(), 0.0],
-                                DoubleSlider::new(&mut m1, &mut m2, datamin..=datamax)
+                                DoubleSlider::new(&mut min_cut, &mut max_cut, datamin..=datamax)
                                     .width(ui.available_width())
                                     .scroll_factor((datamax - datamin) / 100.0)
                                     .separation_distance((datamax - datamin) / 100.0)
                             );
 
                             ui.horizontal(|ui| {
-                                ui.add(egui::Slider::new(&mut m1, datamin..=datamax).text("min cut"));
+                                ui.add(egui::Slider::new(&mut min_cut, datamin..=datamax).text("min cut"));
                             });
                             ui.horizontal(|ui| {
-                                ui.add(egui::Slider::new(&mut m2, datamin..=datamax).text("max cut"));
+                                ui.add(egui::Slider::new(&mut max_cut, datamin..=datamax).text("max cut"));
                             });
+                            if ui.button("Reset cuts").clicked() {
+                                min_cut = min_cut_default;
+                                max_cut = max_cut_default;
+                            }
                         });
                         
                         ui.separator();
 
                         // Isosurface scope
+                        ui.checkbox(&mut show_isosurface, "Show isosurface");
                         ui.add_enabled_ui(show_isosurface, |ui| {
-                            ui.label("Isosurface");
-                            ui.add(egui::Slider::new(&mut isosurface, datamin..=datamax).text("value"));
-                            ui.label("Diffuse color");
-                            ui.color_edit_button_rgba_unmultiplied(&mut diffuse_color);
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Slider::new(&mut isosurface, min_cut_default..=max_cut_default).text("isovalue"));
+                                ui.color_edit_button_rgba_unmultiplied(&mut diffuse_color);
+                            })
                         });
-                        
-                        ui.separator();
-                        // freq_min, freq_max, fov, ra, dec
-                        if let Some(wcs) = wcs.as_ref() {
-                            if ui.button("select").clicked() {
-                                let x_px = ra as f64;
-                                let y_px = dec as f64;
-                                let w_px = fov as f64;
-
-                                let freq_min = freq_min / (naxis.2 as f32);
-                                let freq_max = freq_max / (naxis.2 as f32);
-
-                                let p = wcs
-                                    .unproj(&ImgXY::new(x_px, y_px))
-                                    .unwrap();
-                                let p1 = wcs
-                                    .unproj(&ImgXY::new(x_px - w_px * 0.5, y_px))
-                                    .unwrap();
-                                let p2 = wcs
-                                    .unproj(&ImgXY::new(x_px + w_px * 0.5, y_px))
-                                    .unwrap();
-
-                                #[cfg(target_arch = "wasm32")]
-                                ONSELECT.with(|f| {
-                                    if let Some(cb) = &*f.borrow() {
-                                        use js_sys::Array;
-                                        let ra_min = p1.lon().to_degrees();
-                                        let ra_max = p2.lon().to_degrees();
-                                        let ra = p.lon().to_degrees();
-                                        let dec = p.lat().to_degrees();
-
-                                        let args = Array::new();
-                                        args.push(&JsValue::from_f64(ra));
-                                        args.push(&JsValue::from_f64(dec));
-                                        args.push(&JsValue::from_f64((ra_min - ra_max).abs()));
-                                        args.push(&JsValue::from_f64(freq_min as f64));
-                                        args.push(&JsValue::from_f64(freq_max as f64));
-                                        cb.apply(&JsValue::NULL, &args).unwrap();
-                                    }
-                                });
-                            }
-                        }
 
                         ui.separator();
 
@@ -610,21 +578,30 @@ impl State {
                             new_view = Some((0.0, 0.0));
                         }
 
-                        if ui.button("-Freq Dec (Left)").clicked() {
+                        if ui.button("-V Dec (Left)").clicked() {
                             new_view = Some((-std::f32::consts::PI/2.0, 0.0));
                         }
 
-                        if ui.button("Freq Dec (Right)").clicked() {
+                        if ui.button("V Dec (Right)").clicked() {
                             new_view = Some((std::f32::consts::PI/2.0, 0.0));
                         }
 
-                        if ui.button("RA Freq (Top)").clicked() {
+                        if ui.button("RA V (Top)").clicked() {
                             new_view = Some((std::f32::consts::PI, std::f32::consts::PI * 0.5 - 1e-3));
                         }
 
-                        if ui.button("RA -Freq (Bottom)").clicked() {
+                        if ui.button("RA -V (Bottom)").clicked() {
                             new_view = Some((std::f32::consts::PI, -std::f32::consts::PI * 0.5 + 1e-3));
                         }
+
+                        ui.separator();
+
+                        ui.checkbox(&mut show_unique_slice, "Slice selector");
+                        ui.add_enabled_ui(show_unique_slice, |ui| {
+                            ui.add(egui::Slider::new(&mut slice_idx, 0..=naxis.2).text("slice idx"));
+                        });
+
+                        ui.separator();
 
                         ui.label("Select a frequency range");
                         ui.add_sized(
@@ -634,31 +611,112 @@ impl State {
                                 //.separation_distance((datamax - datamin) / 100.0)
                         );
 
-                        ui.add(egui::Slider::new(&mut fov, 0.0..=naxis.0 as f32).text("Select fov"));
+                        ui.add(egui::Slider::new(&mut fov, 0.0..=naxis.0 as f32).text("Select FoV"));
+                        ui.add(egui::Slider::new(&mut ra, 0.0..=naxis.0 as f32).text("Select RA"));
+                        ui.add(egui::Slider::new(&mut dec, 0.0..=naxis.1 as f32).text("Select Dec"));
 
-                        ui.add(egui::Slider::new(&mut ra, 0.0..=naxis.0 as f32).text("Select ra"));
+                        // freq_min, freq_max, fov, ra, dec
+                        if ui.button("Select").clicked() {
+                            let x_px = ra as f64;
+                            let y_px = dec as f64;
+                            let w_px = fov as f64;
 
-                        ui.add(egui::Slider::new(&mut dec, 0.0..=naxis.1 as f32).text("Select dec"));
+                            let freq_min = freq_min / (naxis.2 as f32);
+                            let freq_max = freq_max / (naxis.2 as f32);
 
-                        self.queue.write_buffer(
-                            &self.buffers["isosurface"],
+                            let p = cube
+                                .wcs
+                                .unproj(&ImgXY::new(x_px, y_px))
+                                .unwrap();
+                            let p1 = cube
+                                .wcs
+                                .unproj(&ImgXY::new(x_px - w_px * 0.5, y_px))
+                                .unwrap();
+                            let p2 = cube
+                                .wcs
+                                .unproj(&ImgXY::new(x_px + w_px * 0.5, y_px))
+                                .unwrap();
+
+                            let fov = cube
+                                .wcs.field_of_view().0 * ((w_px as f64) / (naxis.0 as f64));
+
+                            #[cfg(target_arch = "wasm32")]
+                            ONSELECT.with(|f| {
+                                if let Some(cb) = &*f.borrow() {
+                                    use js_sys::Array;
+                                    let ra_min = p1.lon().to_degrees();
+                                    let ra_max = p2.lon().to_degrees();
+                                    let ra = p.lon().to_degrees();
+                                    let dec = p.lat().to_degrees();
+
+                                    let args = Array::new();
+                                    args.push(&JsValue::from_f64(ra));
+                                    args.push(&JsValue::from_f64(dec));
+                                    args.push(&JsValue::from_f64(fov));
+                                    args.push(&JsValue::from_f64(freq_min as f64));
+                                    args.push(&JsValue::from_f64(freq_max as f64));
+                                    cb.apply(&JsValue::NULL, &args).unwrap();
+                                }
+                            });
+                        }
+
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            if ui.button("Moment 0").clicked() {
+                                if moment0_texture.is_none() {
+                                    let image = moment::compute_moment0(&cube);
+
+                                    let tex = ctx
+                                        .load_texture(
+                                            "moment0",
+                                            egui::ColorImage::from_rgba_unmultiplied([naxis.0 as usize, naxis.1 as usize], &image),
+                                            egui::TextureOptions::NEAREST,
+                                        );
+
+                                    *moment0_texture = Some(tex);
+                                }
+                                show_moment0_window = true;
+                            }
+
+                            if ui.button("Moment 1").clicked() {
+                                
+                            }
+                            if ui.button("Moment 2").clicked() {
+                                
+                            }
+                        });
+
+                        if show_moment0_window {
+                            egui::Window::new("Moment 0")
+                                .open(&mut show_moment0_window)
+                                .show(ctx, |ui| {
+                                    if let Some(tex) = &moment0_texture {
+                                        let size = tex.size_vec2();
+
+                                        ui.image((tex.id(), size));
+                                    }
+                                });
+                        }
+
+                        queue.write_buffer(
+                            &buffers["isosurface"],
                             0,
                             bytemuck::bytes_of(&[isosurface, 0.0, 0.0, 0.0]),
                         );
-                        self.queue.write_buffer(
-                            &self.buffers["perspective"],
+                        queue.write_buffer(
+                            &buffers["perspective"],
                             0,
                             bytemuck::bytes_of(&[if perspective { 1.0_f32 } else { 0.0_f32 }, 0.0, 0.0, 0.0]),
                         );
-                        self.queue.write_buffer(
-                            &self.buffers["diffuse_color"],
+                        queue.write_buffer(
+                            &buffers["diffuse_color"],
                             0,
                             bytemuck::bytes_of(&diffuse_color),
                         );
-                        self.queue.write_buffer(
-                            &self.buffers["cuts"],
+                        queue.write_buffer(
+                            &buffers["cuts"],
                             0,
-                            bytemuck::bytes_of(&[m1, m2, 0.0, 0.0]),
+                            bytemuck::bytes_of(&[min_cut, max_cut, 0.0, 0.0]),
                         );
 
                         let (sx, sy, sz) = if show_unique_slice {
@@ -676,8 +734,8 @@ impl State {
                             )
                         };
 
-                        self.queue.write_buffer(
-                            &self.buffers["slice_range"],
+                        queue.write_buffer(
+                            &buffers["slice_range"],
                             0,
                             bytemuck::bytes_of(&[
                                 sx.start as f32, sx.end as f32,
@@ -688,7 +746,7 @@ impl State {
                         );
                     });
 
-                    if let Some((theta,delta)) = new_view {
+                    if let Some((theta, delta)) = new_view {
                         self.theta = theta as f64;
                         self.delta = delta as f64;
                         self.dtheta = 0.0;
@@ -706,8 +764,8 @@ impl State {
                     self.diffuse_color = diffuse_color;
                     self.show_isosurface = show_isosurface;
                     self.show_unique_slice = show_unique_slice;
-                    self.m1 = m1;
-                    self.m2 = m2;
+                    self.min_cut = min_cut;
+                    self.max_cut = max_cut;
 
                     self.freq_min = freq_min;
                     self.freq_max = freq_max;
@@ -716,6 +774,8 @@ impl State {
                     self.dec = dec;
 
                     self.slice_idx = slice_idx;
+
+                    self.show_moment0_window = show_moment0_window;
                 }
 
                 self.show_options = show_options;
@@ -752,49 +812,50 @@ impl State {
         &mut self,
         reader: Cursor<R>,
     ) -> Result<(), &'static str> {
-        let (new_cube, mincut, maxcut, dim, wcs) = read_fits(reader, &self.device, &self.queue)?;
+        let cube = read_fits(reader, &self.device, &self.queue)?;
 
         // reset the cutoff values
         self.queue.write_buffer(
             &self.buffers["cuts"],
             0,
-            bytemuck::bytes_of(&[mincut, maxcut, 0.0, 0.0]),
+            bytemuck::bytes_of(&[cube.mincut, cube.maxcut, 0.0, 0.0]),
         );
         self.queue.write_buffer(
             &self.buffers["size"],
             0,
-            bytemuck::bytes_of(&[dim.0 as f32, dim.1 as f32, dim.2 as f32, 0.0]),
+            bytemuck::bytes_of(&[cube.dim.0 as f32, cube.dim.1 as f32, cube.dim.2 as f32, 0.0]),
         );
 
-        self.ra = (dim.0 as f32) * 0.5;
-        self.dec = (dim.1 as f32) * 0.5;
+        self.volumetric_renderer.set_volume(&self.device, &self.buffers, &cube.texture);
+
+        self.ra = (cube.dim.0 as f32) * 0.5;
+        self.dec = (cube.dim.1 as f32) * 0.5;
         self.freq_min = 0.0;
-        self.freq_max = dim.2 as f32;
-        self.fov = dim.0 as f32; // todo
+        self.freq_max = cube.dim.2 as f32;
+        self.fov = cube.dim.0 as f32;
+        self.naxis = cube.dim;
+        //self.wcs = Some(cube.wcs);
 
         if !self.show_unique_slice {
             self.queue.write_buffer(
                 &self.buffers["slice_range"],
                 0,
                 bytemuck::bytes_of(&[
-                    0.0, dim.0 as f32,
-                    0.0, dim.1 as f32,
-                    0.0, dim.2 as f32,
+                    0.0, cube.dim.0 as f32,
+                    0.0, cube.dim.1 as f32,
+                    0.0, cube.dim.2 as f32,
                     0.0, 0.0
                 ]),
             );
         }
 
-        self.cut10 = mincut;
-        self.cut90 = maxcut;
+        self.min_cut_default = cube.mincut;
+        self.max_cut_default = cube.maxcut;
         // by default, set the cuts to the one precalculated
-        self.m1 = mincut;
-        self.m2 = maxcut;
+        self.min_cut = cube.mincut;
+        self.max_cut = cube.maxcut;
 
-        self.naxis = dim;
-        self.wcs = Some(wcs);
-
-        self.volumetric_renderer.set_volume(&self.device, &self.buffers, new_cube);
+        self.cube = Some(cube);
 
         Ok(())
     }
@@ -895,8 +956,8 @@ pub struct App {
     cuts: bool,
     cursor_pos: PhysicalPosition<f64>,
     start_cursor_pos: PhysicalPosition<f64>,
-    sm1: f32,
-    sm2: f32,
+    start_min_cut: f32,
+    start_max_cut: f32,
 
     i: usize,
 }
@@ -922,8 +983,8 @@ impl App {
             cursor_pos: PhysicalPosition::new(0.0, 0.0),
             start_cursor_pos: PhysicalPosition::new(0.0, 0.0),
 
-            sm1: 1.0,
-            sm2: 0.0,
+            start_min_cut: 0.0,
+            start_max_cut: 1.0,
             i: 0,
         }
     }
@@ -1009,8 +1070,8 @@ impl ApplicationHandler for App {
                     bytemuck::bytes_of(&[cuts.start, cuts.end, 0.0_f32, 0.0_f32]),
                 );
 
-                state.m1 = cuts.start;
-                state.m2 = cuts.end;
+                state.min_cut = cuts.start;
+                state.max_cut = cuts.end;
             }
 
             if let Some(data) = data {
@@ -1229,8 +1290,8 @@ impl ApplicationHandler for App {
             } => {
                 self.cuts = true;
                 self.start_cursor_pos = self.cursor_pos;
-                self.sm1 = self.state.as_ref().unwrap().m1;
-                self.sm2 = self.state.as_ref().unwrap().m2;
+                self.start_min_cut = self.state.as_ref().unwrap().min_cut;
+                self.start_max_cut = self.state.as_ref().unwrap().max_cut;
             }
             WindowEvent::MouseInput {
                 state: ElementState::Released,
@@ -1238,8 +1299,6 @@ impl ApplicationHandler for App {
                 ..
             } => {
                 self.cuts = false;
-                //self.state.m1 = self.sm1 - ;
-                //self.state.m2 = self.sm2;
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_pos = position;
@@ -1271,16 +1330,16 @@ impl ApplicationHandler for App {
 
                     // between -1 and 1
 
-                    let l = state.cut90 - state.cut10;
-                    state.m1 = self.sm1 + dx * l + dy * l;
-                    state.m2 = self.sm2 + dx * l - dy * l;
+                    let l = state.max_cut_default - state.min_cut_default;
+                    state.min_cut = self.start_min_cut + dx * l + dy * l;
+                    state.max_cut = self.start_max_cut + dx * l - dy * l;
 
                     state.queue.write_buffer(
                         &state.buffers["cuts"],
                         0,
                         bytemuck::bytes_of(&[
-                            state.m1,
-                            state.m2,
+                            state.min_cut,
+                            state.max_cut,
                             0.0,
                             0.0,
                         ]),
@@ -1341,19 +1400,21 @@ fn create_window(event_loop: &ActiveEventLoop) -> Window {
     event_loop.create_window(win_attrs).unwrap()
 }
 
-
-struct Cube<'a> {
-    data: &'a [u8],
+struct Cube {
+    data: Vec<f32>,
     dim: (u32, u32, u32),
     mincut: f32,
     maxcut: f32,
+    texture: Texture,
     wcs: fitsrs::WCS
 }
 
-fn parse_fits_data_cube<'a, R>(fits: &'a mut Fits<Cursor<R>>) -> Result<Cube<'a>, &'static str>
+fn read_fits<R>(reader: Cursor<R>, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Cube, &'static str>
 where
-    R: AsRef<[u8]> + std::fmt::Debug + 'a,
+    R: AsRef<[u8]> + std::fmt::Debug,
 {
+    let mut fits = Fits::from_reader(reader);
+
     if let Some(Ok(hdu)) = fits.next() {
         match hdu {
             HDU::Primary(hdu) => {
@@ -1383,62 +1444,71 @@ where
                         }
                     }
 
-                    let data = image.raw_bytes();
+                    let raw_bytes = image.raw_bytes();
 
-                    let cuts = match b {
+                    let (data, cuts) = match b {
                         -32 => {
-                            let mut floats: Vec<f32> = data
+                            let mut floats: Vec<f32> = raw_bytes
                                 .chunks_exact(4)
                                 .map(|b| f32::from_be_bytes(b.try_into().unwrap()))
                                 .collect();
 
-                            first_and_last_percent_f32(&mut floats, 1.0, 99.0)
-                        }
+                            //let minmax = first_and_last_percent_f32(&mut floats, 0.01, 99.5);
+                            let cuts = estimate_default_cuts_from_variance(&floats);
+                            (floats, cuts)
+                        },
                         8 => {
-                            
-                            let mut bytes: Vec<u8> = data.to_vec();
-                            let range = first_and_last_percent(&mut bytes, 1.0, 99.0);
-                            (range.start as f32)..(range.end as f32)
-                        }
+                            todo!();
+                            /*let mut bytes: Vec<u8> = data.to_vec();
+                            let range = first_and_last_percent(&mut bytes, 0.01, 99.5);
+                            (range.start as f32)..(range.end as f32)*/
+                        },
                         16 => {
-                            let mut shorts: Vec<i16> = data
+                            todo!();
+                            /*let mut shorts: Vec<i16> = data
                                 .chunks_exact(2)
                                 .map(|b| i16::from_be_bytes(b.try_into().unwrap()))
                                 .collect();
 
-                            let range = first_and_last_percent(&mut shorts, 1.0, 99.0);
-                            (range.start as f32)..(range.end as f32)
-                        }
+                            let range = first_and_last_percent(&mut shorts, 0.01, 99.5);
+                            (range.start as f32)..(range.end as f32)*/
+                        },
                         32 => {
-                            let mut int32: Vec<i32> = data
+                            /*let mut int32: Vec<i32> = data
                                 .chunks_exact(4)
                                 .map(|b| i32::from_be_bytes(b.try_into().unwrap()))
                                 .collect();
 
-                            let range = first_and_last_percent(&mut int32, 1.0, 99.0);
-                            (range.start as f32)..(range.end as f32)
-                        }
+                            let range = first_and_last_percent(&mut int32, 0.01, 99.5);
+                            (range.start as f32)..(range.end as f32)*/
+                            todo!();
+                        },
                         64 => {
-                            let mut int64: Vec<i64> = data
+                            /*let mut int64: Vec<i64> = data
                                 .chunks_exact(8)
                                 .map(|b| i64::from_be_bytes(b.try_into().unwrap()))
                                 .collect();
 
-                            let range = first_and_last_percent(&mut int64, 1.0, 99.0);
-                            (range.start as f32)..(range.end as f32)
+                            let range = first_and_last_percent(&mut int64, 0.01, 99.5);
+                            (range.start as f32)..(range.end as f32)*/
+                            todo!();
                         },
                         _ => {
                             return Err("F32, U8, I16, I32, I64 only supported");
                         }
                     };
 
+                    let dim = (d1, d2, d3);
                     let wcs = hdu.wcs().map_err(|_| "wcs not found")?;
+                    let texture = Texture::from_raw_bytes::<f32>(&device, &queue, Some(raw_bytes), dim, 4, "cube")?;
+
                     Ok(Cube {
                         data,
-                        dim: (d1, d2, d3),
+                        dim,
                         mincut: cuts.start,
                         maxcut: cuts.end,
-                        wcs
+                        wcs,
+                        texture
                     })
                 } else {
                     Err("FITS image extension not found")
@@ -1452,28 +1522,6 @@ where
 }
 
 use std::fmt::Debug;
-fn read_fits<R: AsRef<[u8]> + Debug>(
-    reader: Cursor<R>,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> Result<(Texture, f32, f32, (u32, u32, u32), fitsrs::WCS), &'static str> {
-    let mut fits = Fits::from_reader(reader);
-    let Cube {
-        data: raw_bytes,
-        dim,
-        mincut,
-        maxcut,
-        wcs
-    } = parse_fits_data_cube(&mut fits)?;
-
-    Ok((
-        Texture::from_raw_bytes::<f32>(&device, &queue, Some(raw_bytes), dim, 4, "cube")?,
-        mincut,
-        maxcut,
-        dim,
-        wcs
-    ))
-}
 
 pub fn first_and_last_percent_f32(
     slice: &mut [f32],
@@ -1525,6 +1573,60 @@ pub fn first_and_last_percent_f32(
     };
 
     min_val..max_val
+}
+
+
+pub fn estimate_default_cuts_from_variance(
+    slice: &[f32],
+) -> Range<f32> {
+    if slice.is_empty() {
+        return 0.0..0.0;
+    }
+
+    // Move all NaNs to the end
+    /*let valid_len = {
+        let mut i = 0;
+        for j in 0..slice.len() {
+            if !slice[j].is_nan() {
+                slice.swap(i, j);
+                i += 1;
+            }
+        }
+        i
+    };*/
+    let valid_len = slice.len();
+
+    if valid_len == 0 {
+        return f32::NAN..f32::NAN;
+    }
+
+    //let valid = &mut slice[..valid_len];
+
+    /*let (_, median, _) = valid.select_nth_unstable_by(valid_len / 2, |a, b| {
+        a.total_cmp(&b)
+    });
+    let median = *median;*/
+
+    let num_samples = 50000.min(valid_len);
+    let s = (valid_len / num_samples).max(1);
+
+    let mut sum = 0.0;
+    let mut sum2 = 0.0;
+    let mut n = 0;
+
+    for i in (0..slice.len()).step_by(s) {
+        let v = slice[i];
+        if !v.is_nan() {
+            sum += v;
+            sum2 += v*v;
+            n += 1;
+        }
+    }
+
+    let mean = sum / (n as f32);
+    let sigma = ((sum2 / (n as f32)) - mean*mean).sqrt();
+
+    (-2.0 * sigma)..(15.0 * sigma)
 }
 
 pub fn first_and_last_percent<T>(

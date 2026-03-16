@@ -184,8 +184,8 @@ vec3 compute_normal(vec3 p) {
 
 void main() {
         // we define our cube as 2 bounds vertices, l and h
-    vec3 l = vec3(-0.5, -0.5, (sz.x / cube_size.z) - 0.5);
-    vec3 h = vec3(0.5, 0.5, (sz.y / cube_size.z) - 0.5);
+    vec3 l = vec3((sx.x / cube_size.x) - 0.5, (sy.x / cube_size.y) - 0.5, (sz.x / cube_size.z) - 0.5);
+    vec3 h = vec3((sx.y / cube_size.x) - 0.5, (sy.y / cube_size.y) - 0.5, (sz.y / cube_size.z) - 0.5);
 
     vec3 cam_origin = lonlat2xyz(origin.x, origin.y);
 
