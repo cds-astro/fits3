@@ -9,6 +9,8 @@ extern crate console_error_panic_hook;
 use std::iter;
 use std::convert::TryInto;
 use egui_double_slider::DoubleSlider;
+use std::path::PathBuf;
+use egui_file_dialog::FileDialog;
 
 use winit::{
     application::ApplicationHandler,
@@ -110,6 +112,8 @@ struct State {
     dec_max: f32,
 
 
+    file_dialog: FileDialog,
+    picked_file: Option<PathBuf>,
     // isosurface value
     isosurface: f32,
     // a diffuse color to show the isosurface with
@@ -437,6 +441,8 @@ impl State {
             dtheta: 0.0,
             ddelta: 0.0,
 
+            file_dialog: FileDialog::new().add_file_filter_extensions("FITS cube", vec!["fits"]).default_file_filter("FITS cube"),
+            picked_file: None,
             clock,
             egui_renderer,
             volumetric_renderer,
@@ -562,6 +568,10 @@ impl State {
                 let naxis = &self.naxis;
                 let mut show_moment0_window = self.show_moment0_window;
                 let moment0_texture = &mut self.moment0_texture;
+
+                let mut v_check = false;
+                let mut picked_file = self.picked_file.as_ref();
+
                 if let Some(cube) = self.cube.as_ref() {
                     let queue = &self.queue;
 
@@ -648,6 +658,29 @@ impl State {
                             if ui.button("RA -V (Bottom)").clicked() {
                                 new_view = Some((std::f32::consts::PI, -std::f32::consts::PI * 0.5 + 1e-3));
                             }
+
+                            ui.separator();
+
+                            // File import
+                            if ui.button("Pick file").clicked() {
+                                // Open the file dialog to pick a file.
+                                //self.file_dialog.pick_file();
+                                v_check = true;
+                            }
+                            if picked_file.is_some() {
+                                ui.label(format!("Picked file: {:?}", picked_file.unwrap().as_path().file_name().unwrap()));
+                            }
+
+                            /*
+                            // Update the dialog
+                            self.file_dialog.update(ctx);
+
+                            // Check if the user picked a file.
+                            if let Some(path) = self.file_dialog.take_picked() {
+                                //self.picked_file = Some(path.to_path_buf());
+                                println!("SELECTED");
+                            }*/
+
 
                             ui.separator();
 
@@ -863,6 +896,7 @@ impl State {
                             );
                         });
 
+
                         if let Some((theta, delta)) = new_view {
                             self.theta = theta as f64;
                             self.delta = delta as f64;
@@ -875,6 +909,32 @@ impl State {
                                 bytemuck::bytes_of(&[theta, delta, 0.0, 0.0]),
                             );
                         }
+
+
+                        if v_check {
+                            self.file_dialog.pick_file();
+                        }
+                        self.file_dialog.update(ctx);
+
+                        if let Some(path) = self.file_dialog.take_picked() {
+                            if path.extension().unwrap() == "fits" {
+                                #[cfg(not(target_arch = "wasm32"))]
+                                {
+                                    self.picked_file = Some(path.to_path_buf());
+                                    let file = File::open(path.to_path_buf()).unwrap();
+                                    let mmap = unsafe { Mmap::map(&file).unwrap() };
+
+                                    let reader = Cursor::new(mmap);
+                                    let _ = self.visualize_cube(reader);
+                                }
+
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    // TODO
+                                }
+                            }
+                        }
+
 
                         self.isosurface = isosurface;
                         self.perspective = perspective;
