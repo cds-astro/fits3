@@ -23,24 +23,25 @@ impl Texture {
         format: wgpu::TextureFormat,
         rgba: Option<&[u8]>,
         dimensions: (u32, u32, u32),
+        padding: (u32, u32, u32),
         num_bytes_per_pixel: usize,
         label: &str,
     ) -> Result<Self, &'static str> {
         let dimension = wgpu::TextureDimension::D3;
 
         let limits = device.limits();
-        if dimensions.0 <= limits.max_texture_dimension_3d
-            && dimensions.1 <= limits.max_texture_dimension_3d
-            && dimensions.2 <= limits.max_texture_dimension_3d
+        if dimensions.0 + padding.0 <= limits.max_texture_dimension_3d
+            && dimensions.1 + padding.1 <= limits.max_texture_dimension_3d
+            && dimensions.2 + padding.2 <= limits.max_texture_dimension_3d
         {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 // All textures are stored as 3D, we represent our 2D texture
                 // by setting depth to 1.
                 size: wgpu::Extent3d {
-                    width: dimensions.0,
-                    height: dimensions.1,
-                    depth_or_array_layers: dimensions.2,
+                    width: dimensions.0 + padding.0,
+                    height: dimensions.1 + padding.1,
+                    depth_or_array_layers: dimensions.2 + padding.2,
                 },
                 mip_level_count: 1,
                 sample_count: 1,
@@ -119,6 +120,7 @@ impl Texture {
         queue: &wgpu::Queue,
         bytes: Option<&[u8]>,
         dimensions: (u32, u32, u32),
+        padding: (u32, u32, u32),
         num_bytes_per_pixel: usize,
         label: &str,
     ) -> Result<Self, &'static str> {
@@ -130,6 +132,7 @@ impl Texture {
             T::WGPU_FORMAT,
             bytes,
             dimensions,
+            padding,
             num_bytes_per_pixel,
             label,
         )

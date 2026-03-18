@@ -603,62 +603,74 @@ impl State {
 
                             ui.separator();
 
-                            ui.label("Select a frequency range");
-                            ui.add_sized(
-                                [ui.available_width(), 0.0],
-                                DoubleSlider::new(&mut freq_min, &mut freq_max, 0.0..=naxis.2 as f32)
-                                    .width(ui.available_width())
-                                    //.separation_distance((datamax - datamin) / 100.0)
-                            );
+                            ui.add_enabled_ui(!show_unique_slice, |ui| {
+                                ui.label("Select a frequency range");
+                                ui.add_sized(
+                                    [ui.available_width(), 0.0],
+                                    DoubleSlider::new(&mut freq_min, &mut freq_max, 0.0..=naxis.2 as f32)
+                                        .width(ui.available_width())
+                                        //.separation_distance((datamax - datamin) / 100.0)
+                                );
 
-                            ui.add(egui::Slider::new(&mut fov, 0.0..=naxis.0 as f32).text("Select FoV"));
-                            ui.add(egui::Slider::new(&mut ra, 0.0..=naxis.0 as f32).text("Select RA"));
-                            ui.add(egui::Slider::new(&mut dec, 0.0..=naxis.1 as f32).text("Select Dec"));
+                                ui.add(egui::Slider::new(&mut fov, 0.0..=naxis.0 as f32).text("Select FoV"));
+                                ui.add(egui::Slider::new(&mut ra, 0.0..=naxis.0 as f32).text("Select RA"));
+                                ui.add(egui::Slider::new(&mut dec, 0.0..=naxis.1 as f32).text("Select Dec"));
 
-                            // freq_min, freq_max, fov, ra, dec
-                            if ui.button("Select").clicked() {
-                                let x_px = ra as f64;
-                                let y_px = dec as f64;
-                                let w_px = fov as f64;
+                                ui.horizontal(|ui| {
+                                    // freq_min, freq_max, fov, ra, dec
+                                    if ui.button("Select").clicked() {
+                                        let x_px = ra as f64;
+                                        let y_px = dec as f64;
+                                        let w_px = fov as f64;
 
-                                let freq_min = freq_min / (naxis.2 as f32);
-                                let freq_max = freq_max / (naxis.2 as f32);
+                                        let freq_min = freq_min / (naxis.2 as f32);
+                                        let freq_max = freq_max / (naxis.2 as f32);
 
-                                let p = cube
-                                    .wcs
-                                    .unproj(&ImgXY::new(x_px, y_px))
-                                    .unwrap();
-                                let p1 = cube
-                                    .wcs
-                                    .unproj(&ImgXY::new(x_px - w_px * 0.5, y_px))
-                                    .unwrap();
-                                let p2 = cube
-                                    .wcs
-                                    .unproj(&ImgXY::new(x_px + w_px * 0.5, y_px))
-                                    .unwrap();
+                                        let p = cube
+                                            .wcs
+                                            .unproj(&ImgXY::new(x_px, y_px))
+                                            .unwrap();
+                                        let p1 = cube
+                                            .wcs
+                                            .unproj(&ImgXY::new(x_px - w_px * 0.5, y_px))
+                                            .unwrap();
+                                        let p2 = cube
+                                            .wcs
+                                            .unproj(&ImgXY::new(x_px + w_px * 0.5, y_px))
+                                            .unwrap();
 
-                                let fov = cube
-                                    .wcs.field_of_view().0 * ((w_px as f64) / (naxis.0 as f64));
+                                        let fov = cube
+                                            .wcs.field_of_view().0 * ((w_px as f64) / (naxis.0 as f64));
 
-                                #[cfg(target_arch = "wasm32")]
-                                ONSELECT.with(|f| {
-                                    if let Some(cb) = &*f.borrow() {
-                                        use js_sys::Array;
-                                        let ra_min = p1.lon().to_degrees();
-                                        let ra_max = p2.lon().to_degrees();
-                                        let ra = p.lon().to_degrees();
-                                        let dec = p.lat().to_degrees();
+                                        #[cfg(target_arch = "wasm32")]
+                                        ONSELECT.with(|f| {
+                                            if let Some(cb) = &*f.borrow() {
+                                                use js_sys::Array;
+                                                let ra_min = p1.lon().to_degrees();
+                                                let ra_max = p2.lon().to_degrees();
+                                                let ra = p.lon().to_degrees();
+                                                let dec = p.lat().to_degrees();
 
-                                        let args = Array::new();
-                                        args.push(&JsValue::from_f64(ra));
-                                        args.push(&JsValue::from_f64(dec));
-                                        args.push(&JsValue::from_f64(fov));
-                                        args.push(&JsValue::from_f64(freq_min as f64));
-                                        args.push(&JsValue::from_f64(freq_max as f64));
-                                        cb.apply(&JsValue::NULL, &args).unwrap();
+                                                let args = Array::new();
+                                                args.push(&JsValue::from_f64(ra));
+                                                args.push(&JsValue::from_f64(dec));
+                                                args.push(&JsValue::from_f64(fov));
+                                                args.push(&JsValue::from_f64(freq_min as f64));
+                                                args.push(&JsValue::from_f64(freq_max as f64));
+                                                cb.apply(&JsValue::NULL, &args).unwrap();
+                                            }
+                                        });
+                                    }
+
+                                    if ui.button("Cancel").clicked() {
+                                        fov = naxis.0 as f32;
+                                        ra = (naxis.0 as f32) * 0.5;
+                                        dec = (naxis.1 as f32) * 0.5;
+                                        freq_min = 0.0;
+                                        freq_max = naxis.2 as f32;
                                     }
                                 });
-                            }
+                            });
 
                             ui.separator();
                             ui.horizontal(|ui| {
@@ -827,7 +839,7 @@ impl State {
             bytemuck::bytes_of(&[cube.dim.0 as f32, cube.dim.1 as f32, cube.dim.2 as f32, 0.0]),
         );
 
-        self.volumetric_renderer.set_volume(&self.device, &self.buffers, &cube.texture);
+        self.volumetric_renderer.set_volume(&self.device, &self.buffers, &cube);
 
         self.ra = (cube.dim.0 as f32) * 0.5;
         self.dec = (cube.dim.1 as f32) * 0.5;
@@ -835,7 +847,6 @@ impl State {
         self.freq_max = cube.dim.2 as f32;
         self.fov = cube.dim.0 as f32;
         self.naxis = cube.dim;
-        //self.wcs = Some(cube.wcs);
 
         if !self.show_unique_slice {
             self.queue.write_buffer(
@@ -1004,14 +1015,14 @@ impl App {
         )
         .await;
 
-        /*#[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_arch = "wasm32"))]
         {
             let file = File::open(&CUBES_PATH[0]).unwrap();
             let mmap = unsafe { Mmap::map(&file).unwrap() };
 
             let reader = Cursor::new(mmap);
             let _ = state.visualize_cube(reader);
-        }*/
+        }
 
         self.window.get_or_insert(window);
         self.state.get_or_insert(state);
@@ -1407,7 +1418,56 @@ struct Cube {
     mincut: f32,
     maxcut: f32,
     texture: Texture,
+    downsampled_texture: Texture,
     wcs: fitsrs::WCS
+}
+
+fn downsample_8x(
+    input: &[f32],
+    size_x: usize,
+    size_y: usize,
+    size_z: usize,
+) -> Vec<f32> {
+    let new_x = (size_x + 15) / 16;
+    let new_y = (size_y + 15) / 16;
+    let new_z = (size_z + 15) / 16;
+
+    let mut output = vec![0.0; new_x * new_y * new_z];
+
+    for oz in 0..new_z {
+        for oy in 0..new_y {
+            for ox in 0..new_x {
+                let start_x = ox * 16;
+                let start_y = oy * 16;
+                let start_z = oz * 16;
+
+                let end_x = (start_x + 16).min(size_x);
+                let end_y = (start_y + 16).min(size_y);
+                let end_z = (start_z + 16).min(size_z);
+
+                let mut max = f32::NEG_INFINITY;
+
+                for z in start_z..end_z {
+                    for y in start_y..end_y {
+                        for x in start_x..end_x {
+                            let idx = x + size_x * (y + size_y * z);
+                            let p = input[idx];
+                            if !p.is_nan() {
+                                max = p.max(max);
+                            } else {
+                                max = max.max(0.0);
+                            }
+                        }
+                    }
+                }
+
+                let out_idx = ox + new_x * (oy + new_y * oz);
+                output[out_idx] = max;
+            }
+        }
+    }
+
+    output
 }
 
 fn read_fits<R>(reader: Cursor<R>, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Cube, &'static str>
@@ -1449,7 +1509,7 @@ where
 
                     let (data, cuts) = match b {
                         -32 => {
-                            let mut floats: Vec<f32> = raw_bytes
+                            let floats: Vec<f32> = raw_bytes
                                 .chunks_exact(4)
                                 .map(|b| f32::from_be_bytes(b.try_into().unwrap()))
                                 .collect();
@@ -1499,17 +1559,54 @@ where
                         }
                     };
 
-                    let dim = (d1, d2, d3);
-                    let wcs = hdu.wcs().map_err(|_| "wcs not found")?;
-                    let texture = Texture::from_raw_bytes::<f32>(&device, &queue, Some(raw_bytes), dim, 4, "cube")?;
+                    let downsampled_raw_bytes = downsample_8x(&data, d1 as usize, d2 as usize, d3 as usize)
+                        .iter()
+                        .flat_map(|p| {
+                            p.to_be_bytes()
+                        })
+                        .collect::<Vec<u8>>();
 
+                    let wcs = hdu.wcs().map_err(|_| "wcs not found")?;
+                    let texture = Texture::from_raw_bytes::<f32>(
+                        &device,
+                        &queue,
+                        Some(&raw_bytes),
+                        (d1, d2, d3),
+                        (
+                            16 - (d1 % 16),
+                            16 - (d2 % 16),
+                            16 - (d3 % 16),
+                        ),
+                        4,
+                        "cube"
+                    )?;
+                    let dim = (d1 + 16 - (d1 % 16), d2 + 16 - (d2 % 16), d3 + 16 - (d3 % 16));
+
+                    let downsampled_texture = Texture::from_raw_bytes::<f32>(
+                        &device,
+                        &queue,
+                        Some(&downsampled_raw_bytes),
+                        (
+                            (d1 + 15) / 16,
+                            (d2 + 15) / 16,
+                            (d3 + 15) / 16
+                        ),
+                        (0, 0, 0),
+                        4,
+                        "downgraded_cube"
+                    )?;
+
+                    // Build the downgrade resolued cube for faster raytracing.
+                    // This cube will be first sampled to know whether it is interesting
+                    // to sample the full resolued one or to skip to the next big voxel (8x8x8)
                     Ok(Cube {
                         data,
                         dim,
                         mincut: cuts.start,
                         maxcut: cuts.end,
                         wcs,
-                        texture
+                        texture,
+                        downsampled_texture
                     })
                 } else {
                     Err("FITS image extension not found")

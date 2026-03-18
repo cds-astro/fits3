@@ -4,47 +4,51 @@
 layout(location=0) in vec2 ndc;
 layout(location=0) out vec4 f_color;
 
+
 layout(set = 0, binding = 0) uniform texture3D t_map;
 layout(set = 0, binding = 1) uniform sampler s_map;
-layout(set = 0, binding = 2)
+layout(set = 0, binding = 2) uniform texture3D td_map;
+layout(set = 0, binding = 3) uniform sampler sd_map;
+layout(set = 0, binding = 4)
 uniform RotationMatrix {
     mat4 rot;
 };
-layout(set = 0, binding = 4)
+layout(set = 0, binding = 6)
 uniform Time {
     vec4 time;
 };
-layout(set = 0, binding = 5)
+layout(set = 0, binding = 7)
 uniform Origin {
     vec4 origin;
 };
-layout(set = 0, binding = 6)
+layout(set = 0, binding = 8)
 uniform Cut {
     vec4 cut;
 };
-layout(set = 0, binding = 7)
+layout(set = 0, binding = 9)
 uniform Perspective {
     vec4 perspective;
 };
-layout(set = 0, binding = 8)
+layout(set = 0, binding = 10)
 uniform Isosurface {
     vec4 isosurface;
 };
-layout(set = 0, binding = 9)
+layout(set = 0, binding = 11)
 uniform DiffuseColor {
     vec4 diffuse_color;
 };
-layout(set = 0, binding = 10)
+layout(set = 0, binding = 12)
 uniform Size {
     vec4 cube_size;
 };
-layout(set = 0, binding = 11)
+layout(set = 0, binding = 13)
 uniform Slices {
     vec2 sx;
     vec2 sy;
     vec2 sz;
     vec2 sw;
 };
+
 
 vec3 lonlat2xyz(float lon, float lat) {
     float lat_s = sin(lat);

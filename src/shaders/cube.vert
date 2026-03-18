@@ -7,7 +7,7 @@ layout(location=0) in vec2 a_ndc;
 
 layout(location=0) out vec2 ndc;
 
-layout(set = 0, binding = 3)
+layout(set = 0, binding = 5)
 uniform Window {
     vec4 size;
 };
