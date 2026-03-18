@@ -10,6 +10,7 @@ use std::iter;
 use std::convert::TryInto;
 use egui_double_slider::DoubleSlider;
 use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
 use egui_file_dialog::FileDialog;
 
 use winit::{
@@ -28,6 +29,7 @@ mod vertex;
 mod volumetric;
 mod selector;
 mod moment;
+mod open_file;
 use fitsrs::card::Value;
 use fitsrs::HDU;
 
@@ -72,6 +74,8 @@ struct State {
     size: winit::dpi::PhysicalSize<u32>,
 
     #[cfg(target_arch = "wasm32")]
+    send_data: async_channel::Sender<Vec<u8>>,
+    #[cfg(target_arch = "wasm32")]
     recv_data: async_channel::Receiver<Vec<u8>>,
     
     is_surface_configured: bool,
@@ -111,7 +115,7 @@ struct State {
     dec_min: f32,
     dec_max: f32,
 
-
+    #[cfg(not(target_arch = "wasm32"))]
     file_dialog: FileDialog,
     picked_file: Option<PathBuf>,
     // isosurface value
@@ -344,51 +348,6 @@ impl State {
         #[cfg(target_arch = "wasm32")]
         let (send_data, recv_data) = async_channel::unbounded::<Vec<u8>>();
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            // File reading
-            let document = web_sys::window().unwrap().document().unwrap();
-            let input = document
-                .get_element_by_id("file-input")
-                .unwrap()
-                .dyn_into::<web_sys::HtmlInputElement>()
-                .unwrap();
-
-            let input_cloned = input.clone();
-            let sdd = send_data.clone();
-            let closure = Closure::wrap(Box::new(move |_: web_sys::Event| {
-                if let Some(file_list) = input_cloned.files() {
-                    if let Some(file) = file_list.get(0) {
-                        let reader = web_sys::FileReader::new().unwrap();
-
-                        let reader_cloned = reader.clone();
-                        let sd = sdd.clone();
-                        let onloadend_cb = Closure::wrap(Box::new(move |_: web_sys::Event| {
-                            let result = reader_cloned.result().unwrap();
-                            let array = js_sys::Uint8Array::new(&result);
-                            let len = array.length() as usize;
-                            let sd3 = sd.clone();
-
-                            wasm_bindgen_futures::spawn_local(async move {
-                                let data = array.to_vec();
-                                sd3.send(data).await.unwrap();
-                            });
-
-                            // Here you can use `data` (Vec<u8>) as you like.
-                            web_sys::console::log_1(&format!("Read {} bytes from file", len).into());
-                        }) as Box<dyn FnMut(_)>);
-
-                        reader.set_onloadend(Some(onloadend_cb.as_ref().unchecked_ref()));
-                        reader.read_as_array_buffer(&file).unwrap();
-                        onloadend_cb.forget(); // prevent drop
-                    }
-                }
-            }) as Box<dyn FnMut(_)>);
-
-            input.set_onchange(Some(closure.as_ref().unchecked_ref()));
-            closure.forget(); // prevent drop
-        }
-
         let volumetric_renderer = VolumetricRenderer::new(&device, &queue, &config, &buffers);
         let selector_renderer = SelectorRenderer::new(&device, &config, &buffers);
 
@@ -400,6 +359,8 @@ impl State {
             size,
             #[cfg(target_arch = "wasm32")]
             recv_data,
+            #[cfg(target_arch = "wasm32")]
+            send_data,
 
             is_surface_configured: false,
 
@@ -417,7 +378,7 @@ impl State {
             f2: 100.0,
             fmin: 0.0,
             fmax: 100.0,
-            fov: 5.0,
+            fov: 100.0,
             fov_min: 0.0,
             fov_max: 100.0,
             ra: 50.0,
@@ -440,8 +401,10 @@ impl State {
             theta: std::f64::consts::PI,
             dtheta: 0.0,
             ddelta: 0.0,
-
-            file_dialog: FileDialog::new().add_file_filter_extensions("FITS cube", vec!["fits"]).default_file_filter("FITS cube"),
+            #[cfg(not(target_arch = "wasm32"))]
+            file_dialog: FileDialog::new()
+                .add_file_filter_extensions("FITS cube", vec!["fits"])
+                .default_file_filter("FITS cube"),
             picked_file: None,
             clock,
             egui_renderer,
@@ -565,31 +528,66 @@ impl State {
                 let mut fmax = self.fmax;
                 let mut fov_min = self.fov_min;
                 let mut fov_max = self.fov_max;
-                let naxis = &self.naxis;
                 let mut show_moment0_window = self.show_moment0_window;
-                let moment0_texture = &mut self.moment0_texture;
 
-                let mut v_check = false;
-                let mut picked_file = self.picked_file.as_ref();
+                let picked_file = &self.picked_file;
 
-                if let Some(cube) = self.cube.as_ref() {
+                #[cfg(target_arch = "wasm32")]
+                let send_data = self.send_data.clone();
+
+                #[cfg(not(target_arch = "wasm32"))]
+                let file_dialog = &mut self.file_dialog;
+
+                egui::TopBottomPanel::top("top_bar").show(self.egui_renderer.context(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.heading("FITS3");
+                        // File import
+                        if ui.button("Load a file").clicked() {
+                            // Open the file dialog to pick a file.
+                            #[cfg(target_arch = "wasm32")]
+                            open_file::open_file_dialog(send_data);
+
+                            #[cfg(not(target_arch = "wasm32"))]
+                            file_dialog.pick_file();
+                        }
+
+                        if picked_file.is_some() {
+                            ui.label(format!("Picked file: {:?}", picked_file.clone().unwrap().as_path().file_name().unwrap()));
+                        }
+                        ui.checkbox(&mut show_options, "Show options");
+                    });
+                });
+
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    file_dialog.update(self.egui_renderer.context());
+
+                    if let Some(path) = file_dialog.take_picked() {
+                        if path.extension().unwrap() == "fits" {
+                            self.picked_file = Some(path.to_path_buf());
+                            let file = File::open(path.to_path_buf()).unwrap();
+                            let mmap = unsafe { Mmap::map(&file).unwrap() };
+
+                            let reader = Cursor::new(mmap);
+                            let _ = self.visualize_cube(reader);
+                        }
+                    }
+                }
+
+                let cube = self.cube.as_ref();
                     let queue = &self.queue;
 
                     let mut slice_idx = self.slice_idx;
-
-                    egui::TopBottomPanel::top("top_bar").show(self.egui_renderer.context(), |ui| {
-                        ui.horizontal(|ui| {
-                            ui.heading("WebGPU 3D FITS viewer");
-                            ui.checkbox(&mut show_options, "Show options");
-                        });
-                    });
 
                     let data_length = (self.max_cut_default - self.min_cut_default).abs();
                     let datamin = self.min_cut_default - data_length;
                     let datamax = self.max_cut_default + 5.0*data_length;
 
-                    let ctx = self.egui_renderer.context();
+                    
                     let buffers = &self.buffers;
+                    let moment0_texture = &mut self.moment0_texture;
+                    let naxis = &self.naxis;
+                    let ctx = self.egui_renderer.context();
 
                     if show_options {
                         egui::SidePanel::left("fits3 options")
@@ -598,19 +596,17 @@ impl State {
                             // Volumetric scope
                             ui.add_enabled_ui(!show_isosurface, |ui| {
                                 ui.label("Cutout parameters");
-                                ui.add_sized(
-                                    [ui.available_width(), 0.0],
+                                ui.add(
                                     DoubleSlider::new(&mut min_cut, &mut max_cut, datamin..=datamax)
-                                        .width(ui.available_width())
                                         .scroll_factor((datamax - datamin) / 100.0)
                                         .separation_distance((datamax - datamin) / 100.0)
                                 );
 
                                 ui.horizontal(|ui| {
-                                    ui.add(egui::Slider::new(&mut min_cut, datamin..=datamax).text("min cut"));
+                                    ui.add(egui::Slider::new(&mut min_cut, datamin..=datamax).text("Min cut"));
                                 });
                                 ui.horizontal(|ui| {
-                                    ui.add(egui::Slider::new(&mut max_cut, datamin..=datamax).text("max cut"));
+                                    ui.add(egui::Slider::new(&mut max_cut, datamin..=datamax).text("Max cut"));
                                 });
                                 if ui.button("Reset cuts").clicked() {
                                     min_cut = min_cut_default;
@@ -623,10 +619,9 @@ impl State {
                             // Isosurface scope
                             ui.checkbox(&mut show_isosurface, "Show isosurface");
                             ui.add_enabled_ui(show_isosurface, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::Slider::new(&mut isosurface, min_cut_default..=max_cut_default).text("isovalue"));
-                                    ui.color_edit_button_rgba_unmultiplied(&mut diffuse_color);
-                                })
+                                ui.add(egui::Slider::new(&mut isosurface, min_cut_default..=max_cut_default).text("Iso-value"));
+                                ui.label("Diffuse color");
+                                ui.color_edit_button_rgba_unmultiplied(&mut diffuse_color);
                             });
 
                             ui.separator();
@@ -661,29 +656,6 @@ impl State {
 
                             ui.separator();
 
-                            // File import
-                            if ui.button("Pick file").clicked() {
-                                // Open the file dialog to pick a file.
-                                //self.file_dialog.pick_file();
-                                v_check = true;
-                            }
-                            if picked_file.is_some() {
-                                ui.label(format!("Picked file: {:?}", picked_file.unwrap().as_path().file_name().unwrap()));
-                            }
-
-                            /*
-                            // Update the dialog
-                            self.file_dialog.update(ctx);
-
-                            // Check if the user picked a file.
-                            if let Some(path) = self.file_dialog.take_picked() {
-                                //self.picked_file = Some(path.to_path_buf());
-                                println!("SELECTED");
-                            }*/
-
-
-                            ui.separator();
-
                             ui.checkbox(&mut show_unique_slice, "Slice selector");
                             ui.add_enabled_ui(show_unique_slice, |ui| {
                                 ui.add(egui::Slider::new(&mut slice_idx, (fmin as u32)..=(fmax as u32)).text("slice idx"));
@@ -693,135 +665,147 @@ impl State {
 
                             ui.add_enabled_ui(!show_unique_slice, |ui| {
                                 ui.label("Select a frequency range");
-                                ui.add_sized(
-                                    [ui.available_width(), 0.0],
-                                    DoubleSlider::new(&mut f1, &mut f2, fmin..=fmax)
-                                        .width(ui.available_width())
-                                );
+                                ui.horizontal(|ui| {
+                                    ui.add(egui::DragValue::new(&mut f1).speed(1.0));
+                                    ui.add(
+                                        DoubleSlider::new(&mut f1, &mut f2, fmin..=fmax)
+                                            .scroll_factor(1.0)
+                                    );
+                                    ui.add(egui::DragValue::new(&mut f2).speed(1.0));
+                                });
 
                                 ui.add(egui::Slider::new(&mut fov, fov_min..=fov_max as f32).text("Select FoV"));
                                 ui.add(egui::Slider::new(&mut ra, ra_min..=ra_max as f32).text("Select RA"));
                                 ui.add(egui::Slider::new(&mut dec, dec_min..=dec_max as f32).text("Select Dec"));
 
-                                ui.horizontal(|ui| {
+                                ui.add_enabled_ui(cube.is_some(), |ui| {
                                     // f1, f2, fov, ra, dec
-                                    if ui.button("Select").clicked() {
-                                        let l = [
-                                            (ra - fov * 0.5) / (naxis.0 as f32),
-                                            (dec - fov * 0.5) / (naxis.1 as f32),
-                                            f1 / (naxis.2 as f32)
-                                        ];
-                                        let h = [
-                                            (ra + fov * 0.5) / (naxis.0 as f32),
-                                            (dec + fov * 0.5) / (naxis.1 as f32),
-                                            f2 / (naxis.2 as f32)
-                                        ];
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Select").clicked() {
+                                            let l = [
+                                                (ra - fov * 0.5) / (naxis.0 as f32),
+                                                (dec - fov * 0.5) / (naxis.1 as f32),
+                                                f1 / (naxis.2 as f32)
+                                            ];
+                                            let h = [
+                                                (ra + fov * 0.5) / (naxis.0 as f32),
+                                                (dec + fov * 0.5) / (naxis.1 as f32),
+                                                f2 / (naxis.2 as f32)
+                                            ];
 
-                                        queue.write_buffer(
-                                            &buffers["zoom"],
-                                            0,
-                                            bytemuck::bytes_of(&[
-                                                l[0], l[1], l[2], 0.0,
-                                                h[0], h[1], h[2], 0.0
-                                            ]),
-                                        );
+                                            queue.write_buffer(
+                                                &buffers["zoom"],
+                                                0,
+                                                bytemuck::bytes_of(&[
+                                                    l[0], l[1], l[2], 0.0,
+                                                    h[0], h[1], h[2], 0.0
+                                                ]),
+                                            );
 
-                                        // set the new select limits
-                                        ra_min = ra - fov * 0.5;
-                                        ra_max = ra + fov * 0.5;
-                                        dec_min = dec - fov * 0.5;
-                                        dec_max = dec + fov * 0.5;
-                                        fmin = f1 as f32;
-                                        fmax = f2 as f32;
-                                        fov_min = 0.0;
-                                        fov_max = fov;
+                                            // set the new select limits
+                                            ra_min = ra - fov * 0.5;
+                                            ra_max = ra + fov * 0.5;
+                                            dec_min = dec - fov * 0.5;
+                                            dec_max = dec + fov * 0.5;
+                                            fmin = f1 as f32;
+                                            fmax = f2 as f32;
+                                            fov_min = 0.0;
+                                            fov_max = fov;
 
-                                        #[cfg(target_arch = "wasm32")]
-                                        {
-                                            let x_px = ra as f64;
-                                            let y_px = dec as f64;
-                                            let w_px = fov as f64;
+                                            #[cfg(target_arch = "wasm32")]
+                                            {
+                                                let x_px = ra as f64;
+                                                let y_px = dec as f64;
+                                                let w_px = fov as f64;
 
-                                            let p = cube
-                                                .wcs
-                                                .unproj(&ImgXY::new(x_px, y_px))
-                                                .unwrap();
+                                                if let Some(cube) = cube {
+                                                    let p = cube
+                                                        .wcs
+                                                        .unproj(&ImgXY::new(x_px, y_px))
+                                                        .unwrap();
 
-                                            let fov = cube
-                                                .wcs.field_of_view().0 * ((w_px as f64) / (naxis.0 as f64));
+                                                    let fov = cube
+                                                        .wcs.field_of_view().0 * ((w_px as f64) / (naxis.0 as f64));
 
-                                            let f1 = f1 / (naxis.2 as f32);
-                                            let f2 = f2 / (naxis.2 as f32);
+                                                    let f1 = f1 / (naxis.2 as f32);
+                                                    let f2 = f2 / (naxis.2 as f32);
 
-                                            ONSELECT.with(|f| {
-                                                if let Some(cb) = &*f.borrow() {
-                                                    use js_sys::Array;
-                                                    let ra = p.lon().to_degrees();
-                                                    let dec = p.lat().to_degrees();
+                                                    ONSELECT.with(|f| {
+                                                        if let Some(cb) = &*f.borrow() {
+                                                            use js_sys::Array;
+                                                            let ra = p.lon().to_degrees();
+                                                            let dec = p.lat().to_degrees();
 
-                                                    let args = Array::new();
-                                                    args.push(&JsValue::from_f64(ra));
-                                                    args.push(&JsValue::from_f64(dec));
-                                                    args.push(&JsValue::from_f64(fov));
-                                                    args.push(&JsValue::from_f64(f1 as f64));
-                                                    args.push(&JsValue::from_f64(f2 as f64));
-                                                    cb.apply(&JsValue::NULL, &args).unwrap();
+                                                            let args = Array::new();
+                                                            args.push(&JsValue::from_f64(ra));
+                                                            args.push(&JsValue::from_f64(dec));
+                                                            args.push(&JsValue::from_f64(fov));
+                                                            args.push(&JsValue::from_f64(f1 as f64));
+                                                            args.push(&JsValue::from_f64(f2 as f64));
+                                                            cb.apply(&JsValue::NULL, &args).unwrap();
+                                                        }
+                                                    });
                                                 }
-                                            });
+                                            }
                                         }
-                                    }
 
-                                    if ui.button("Reset").clicked() {
-                                        fov = naxis.0 as f32;
-                                        ra = (naxis.0 as f32) * 0.5;
-                                        dec = (naxis.1 as f32) * 0.5;
-                                        f1 = 0.0;
-                                        f2 = naxis.2 as f32;
+                                        if ui.button("Reset").clicked() {
+                                            fov = naxis.0 as f32;
+                                            ra = (naxis.0 as f32) * 0.5;
+                                            dec = (naxis.1 as f32) * 0.5;
+                                            f1 = 0.0;
+                                            f2 = naxis.2 as f32;
 
-                                        ra_min = 0.0;
-                                        ra_max = naxis.0 as f32;
-                                        dec_min = 0.0;
-                                        dec_max = naxis.1 as f32;
-                                        fmin = 0.0;
-                                        fmax = naxis.2 as f32;
-                                        fov_min = 0.0;
-                                        fov_max = naxis.0 as f32;
+                                            ra_min = 0.0;
+                                            ra_max = naxis.0 as f32;
+                                            dec_min = 0.0;
+                                            dec_max = naxis.1 as f32;
+                                            fmin = 0.0;
+                                            fmax = naxis.2 as f32;
+                                            fov_min = 0.0;
+                                            fov_max = naxis.0 as f32;
 
-                                        queue.write_buffer(
-                                            &buffers["zoom"],
-                                            0,
-                                            bytemuck::bytes_of(&[
-                                                0.0_f32, 0.0, 0.0, 0.0,
-                                                1.0, 1.0, 1.0, 0.0
-                                            ]),
-                                        );
-                                    }
+                                            queue.write_buffer(
+                                                &buffers["zoom"],
+                                                0,
+                                                bytemuck::bytes_of(&[
+                                                    0.0_f32, 0.0, 0.0, 0.0,
+                                                    1.0, 1.0, 1.0, 0.0
+                                                ]),
+                                            );
+                                        }
+                                    });
                                 });
                             });
 
                             ui.separator();
-                            ui.horizontal(|ui| {
-                                if ui.button("Moment 0").clicked() {
-                                    if moment0_texture.is_none() {
-                                        let image = moment::compute_moment0(&cube);
 
-                                        let tex = ctx
-                                            .load_texture(
-                                                "moment0",
-                                                egui::ColorImage::from_rgba_unmultiplied([naxis.0 as usize, naxis.1 as usize], &image),
-                                                egui::TextureOptions::NEAREST,
-                                            );
+                            ui.add_enabled_ui(cube.is_some(), |ui| {
+                                if let Some(cube) = cube {
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Moment 0").clicked() {
+                                            if moment0_texture.is_none() {
+                                                let image = moment::compute_moment0(&cube);
 
-                                        *moment0_texture = Some(tex);
-                                    }
-                                    show_moment0_window = true;
-                                }
+                                                let tex = ctx
+                                                    .load_texture(
+                                                        "moment0",
+                                                        egui::ColorImage::from_rgba_unmultiplied([naxis.0 as usize, naxis.1 as usize], &image),
+                                                        egui::TextureOptions::NEAREST,
+                                                    );
 
-                                if ui.button("Moment 1").clicked() {
-                                    
-                                }
-                                if ui.button("Moment 2").clicked() {
-                                    
+                                                *moment0_texture = Some(tex);
+                                            }
+                                            show_moment0_window = true;
+                                        }
+
+                                        if ui.button("Moment 1").clicked() {
+                                            
+                                        }
+                                        if ui.button("Moment 2").clicked() {
+                                            
+                                        }
+                                    });
                                 }
                             });
 
@@ -910,32 +894,6 @@ impl State {
                             );
                         }
 
-
-                        if v_check {
-                            self.file_dialog.pick_file();
-                        }
-                        self.file_dialog.update(ctx);
-
-                        if let Some(path) = self.file_dialog.take_picked() {
-                            if path.extension().unwrap() == "fits" {
-                                #[cfg(not(target_arch = "wasm32"))]
-                                {
-                                    self.picked_file = Some(path.to_path_buf());
-                                    let file = File::open(path.to_path_buf()).unwrap();
-                                    let mmap = unsafe { Mmap::map(&file).unwrap() };
-
-                                    let reader = Cursor::new(mmap);
-                                    let _ = self.visualize_cube(reader);
-                                }
-
-                                #[cfg(target_arch = "wasm32")]
-                                {
-                                    // TODO
-                                }
-                            }
-                        }
-
-
                         self.isosurface = isosurface;
                         self.perspective = perspective;
                         self.diffuse_color = diffuse_color;
@@ -962,7 +920,6 @@ impl State {
 
                         self.show_moment0_window = show_moment0_window;
                     }
-                }
 
                 self.show_options = show_options;
 
