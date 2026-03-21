@@ -48,6 +48,10 @@ uniform Slices {
     vec2 sz;
     vec2 sw;
 };
+layout(set = 0, binding = 14)
+uniform BlockSize {
+    vec4 block_size;
+};
 
 
 vec3 lonlat2xyz(float lon, float lat) {
@@ -170,8 +174,11 @@ const float camera_near = 1.0;
 
 float probe_cube(vec3 p) {
     float v = to_l_endian(texture(sampler3D(t_map, s_map), p).r);
-    // max suppress the NaNs, if v is NaN then we add 0.0
-    return max(v, 0.0);
+    return mix(v, -1e30, isnan(v));
+}
+float probe_downsampled_cube(vec3 p) {
+    // no need to handle NaNs because it is assumed there are none by construction.
+    return texture(sampler3D(td_map, sd_map), p).r;
 }
 
 vec3 compute_normal(vec3 p) {
@@ -186,15 +193,31 @@ vec3 compute_normal(vec3 p) {
     return normalize(n);
 }
 
+vec3 grad4(vec3 p) {
+    vec3 e = 1.0 / cube_size.xyz;
+
+    vec3 k1 = vec3( 1, -1, -1);
+    vec3 k2 = vec3(-1, -1,  1);
+    vec3 k3 = vec3(-1,  1, -1);
+    vec3 k4 = vec3( 1,  1,  1);
+
+    return normalize(
+        k1 * probe_cube(p + k1 * e) +
+        k2 * probe_cube(p + k2 * e) +
+        k3 * probe_cube(p + k3 * e) +
+        k4 * probe_cube(p + k4 * e)
+    );
+}
+
 void main() {
-        // we define our cube as 2 bounds vertices, l and h
-    vec3 l = vec3((sx.x / cube_size.x) - 0.5, (sy.x / cube_size.y) - 0.5, (sz.x / cube_size.z) - 0.5);
-    vec3 h = vec3((sx.y / cube_size.x) - 0.5, (sy.y / cube_size.y) - 0.5, (sz.y / cube_size.z) - 0.5);
+ // we define our cube as 2 bounds vertices, l and h
+    vec3 l = max(vec3((sx.x / cube_size.x) - 0.5, (sy.x / cube_size.y) - 0.5, (sz.x / cube_size.z) - 0.5), vec3(-0.5));
+    vec3 h = min(vec3((sx.y / cube_size.x) - 0.5, (sy.y / cube_size.y) - 0.5, (sz.y / cube_size.z) - 0.5), vec3(0.5));
 
     vec3 cam_origin = lonlat2xyz(origin.x, origin.y);
 
     // vector from camera origin to the look
-    vec3 cam_dir = normalize(-cam_origin);
+    vec3 cam_dir = -cam_origin;
     // origin of the screen in world space
     vec3 o_cam = cam_origin + cam_dir * camera_near;
 
@@ -222,42 +245,99 @@ void main() {
         discard;
     }
 
-    vec3 voxel_size = 2.0 / cube_size.xyz;
-    vec3 inv_dir = abs(r) / voxel_size;
+    vec3 abs_r = abs(r);
+    vec3 inv_r = 1.0 / r;
+    vec3 padding = mod(block_size.xyz - mod(cube_size.xyz, block_size.xyz), block_size.xyz);
+
+    vec3 f = (cube_size.xyz) / (cube_size.xyz + padding.xyz);
+
+    vec3 inv_dir = abs_r * cube_size.xyz;
     float step = 1.0 / max(max(inv_dir.x, inv_dir.y), inv_dir.z);
-    //float step = 1.0 / 512.0;
-    int num_sampling = int((t_f - t_c) / step);
+    
+    vec3 coarse_size = (cube_size.xyz + padding.xyz) / block_size.xyz;
+    vec3 coarse_inv = 1.0 / coarse_size;
 
     vec3 dr = r * step;
-
-    float random = fract(sin(gl_FragCoord.x * 12.9898 + gl_FragCoord.y * 78.233) * 43758.5453);
-    float t_s = t_c + random * step;
+    float random = fract(dot(gl_FragCoord.xy, vec2(0.75487766, 0.56984029)));
     // absolute sampling point
     // scaled to the origin of the cube
-    vec3 p = p_cam + r * t_s + vec3(0.5);
-    vec3 pp = p;
-    int i = 0;
-    // Set v to negative infinity
-    float v = -1e30;
-    while (i < num_sampling && v < isosurface.x) {
-        pp = p;
-        p += dr;
+    float t = t_c + step * random;
+    // p in [0; 1]
+    vec3 p = p_cam + r * t + vec3(0.5);
 
-        v = probe_cube(p);
-        i++;
+    float intensity = cut.x;
+
+    vec3 step_dir = sign(r);
+    vec3 cell = floor(p * coarse_size * f);
+    vec3 next_boundary = (cell + max(step_dir, 0.0)) * coarse_inv;
+
+    vec3 tMax = vec3(t) + (next_boundary - p * f) * inv_r;
+    vec3 tDelta = coarse_inv * abs(inv_r);
+
+    bvec3 zero_dir = lessThan(abs(r), vec3(1e-8));
+    tDelta = mix(tDelta, vec3(1e30), zero_dir);
+    tMax   = mix(tMax,   vec3(1e30), zero_dir);
+
+    float num_sampling = 0.0;
+
+    vec3 pp = p;
+
+    float v = -1e30;
+    float vv = v;
+
+    while (t < t_f && v < isosurface.x) {
+        vec3 uv = (cell + 0.5) * coarse_inv;
+        float max_v = probe_downsampled_cube(uv);
+
+        if (max_v > isosurface.x) {
+            float boundary = min(tMax.x, min(tMax.y, tMax.z));
+            float limit = min(boundary, t_f);
+ 
+            while(v < isosurface.x && t < limit) {
+                vv = v;
+                v = probe_cube(p * f);
+                num_sampling += step;
+
+                if (v > isosurface.x)
+                    break;
+
+                pp = p;
+                p += dr;
+                t += step;
+            }
+
+            if (v > isosurface.x)
+                break;
+        }
+
+        float t_prev = t;
+
+        bvec3 m = lessThanEqual(tMax, min(tMax.yzx, tMax.zxy));
+        vec3 mask = vec3(m);
+
+        t = dot(mask, tMax);
+
+        cell += mask * step_dir;
+        tMax += mask * tDelta;
+
+        pp = p;
+        p += r * (t - t_prev);
+        num_sampling += t - t_prev;
     }
 
-    float vv = probe_cube(pp);
-    vec3 ps = pp + (p - pp) * (isosurface.x - vv) / (v - vv);
+    //vec3 ps = (pp + (p - pp) * (isosurface.x - vv) / (v - vv));
 
-    vec3 N = compute_normal(ps);
-    vec3 L = normalize(vec3(10.0, 10.0, 10.0) - ps);
+    //vec3 N = compute_normal(ps);
+    //vec3 L = normalize(vec3(10.0, 10.0, 10.0) - ps);
 
-    float c = clamp((isosurface.x - cut.x) / (cut.y - cut.x), 0.0, 1.0);
-
-    vec4 color = vec4(diffuse_color.rgb*0.05 + diffuse_color.rgb * max(dot(N, L), 0.0), diffuse_color.a);
+    //float c = clamp((isosurface.x - cut.x) / (cut.y - cut.x), 0.0, 1.0);
+    vec3 N = grad4(p * f);
+    vec3 light_dir = normalize(-vec3(10.0, 10.0, 10.0));
+    float diffuse = max(dot(N, light_dir), 0.0);
+    vec4 color = vec4(diffuse_color.rgb * 0.05 + diffuse_color.rgb * diffuse, diffuse_color.a);
     //f_color = vec4(cc.rgb*0.05 + cc.rgb * max(dot(N, l), 0.0), 1.0);
 
     f_color = mix(vec4(0.0, 0.0, 0.0, 1.0), color, float(v > isosurface.x));
+    //f_color = vec4(vec3(num_sampling / 1000.0), 1.0);
 }
  

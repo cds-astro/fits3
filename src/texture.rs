@@ -29,19 +29,25 @@ impl Texture {
     ) -> Result<Self, &'static str> {
         let dimension = wgpu::TextureDimension::D3;
 
+        let padded_dimensions = (
+            dimensions.0 + padding.0,
+            dimensions.1 + padding.1,
+            dimensions.2 + padding.2
+        );
+
         let limits = device.limits();
-        if dimensions.0 + padding.0 <= limits.max_texture_dimension_3d
-            && dimensions.1 + padding.1 <= limits.max_texture_dimension_3d
-            && dimensions.2 + padding.2 <= limits.max_texture_dimension_3d
+        if padded_dimensions.0 <= limits.max_texture_dimension_3d
+            && padded_dimensions.1 <= limits.max_texture_dimension_3d
+            && padded_dimensions.2 <= limits.max_texture_dimension_3d
         {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 // All textures are stored as 3D, we represent our 2D texture
                 // by setting depth to 1.
                 size: wgpu::Extent3d {
-                    width: dimensions.0 + padding.0,
-                    height: dimensions.1 + padding.1,
-                    depth_or_array_layers: dimensions.2 + padding.2,
+                    width: padded_dimensions.0,
+                    height: padded_dimensions.1,
+                    depth_or_array_layers: padded_dimensions.2,
                 },
                 mip_level_count: 1,
                 sample_count: 1,
@@ -72,6 +78,15 @@ impl Texture {
                 num_bytes_per_pixel,
             };
 
+            // Write it all with with low values / NaNs
+            /*let nan = 4.404001e-41;
+            let voxel_count = (padded_dimensions.0 * padded_dimensions.1 * padded_dimensions.2) as usize;
+            let data = vec![nan; voxel_count];
+
+            let bytes = bytemuck::cast_slice(&data);
+            texture.write_data(queue, (0, 0, 0), bytes, padded_dimensions);
+            */
+            // Then write the actual data
             if let Some(rgba) = rgba {
                 texture.write_data(queue, (0, 0, 0), rgba, dimensions);
             }

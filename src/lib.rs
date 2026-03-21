@@ -263,6 +263,12 @@ impl State {
                 size: 16,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
+            })),
+            ("block_size", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("block size uniform"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             }))
         ].into_iter().collect();
 
@@ -837,6 +843,11 @@ impl State {
             &self.buffers["size"],
             0,
             bytemuck::bytes_of(&[cube.dim.0 as f32, cube.dim.1 as f32, cube.dim.2 as f32, 0.0]),
+        );
+        self.queue.write_buffer(
+            &self.buffers["block_size"],
+            0,
+            bytemuck::bytes_of(&[32.0, 32.0, ((cube.dim.2 as f32) / 64.0).clamp(16.0, 128.0), 0.0]),
         );
 
         self.volumetric_renderer.set_volume(&self.device, &self.buffers, &cube);
@@ -1427,23 +1438,26 @@ fn downsample_8x(
     size_x: usize,
     size_y: usize,
     size_z: usize,
+    bx: usize,
+    by: usize,
+    bz: usize,
 ) -> Vec<f32> {
-    let new_x = (size_x + 15) / 16;
-    let new_y = (size_y + 15) / 16;
-    let new_z = (size_z + 15) / 16;
+    let new_x = (size_x + bx - 1) / bx;
+    let new_y = (size_y + by - 1) / by;
+    let new_z = (size_z + bz - 1) / bz;
 
     let mut output = vec![0.0; new_x * new_y * new_z];
 
     for oz in 0..new_z {
         for oy in 0..new_y {
             for ox in 0..new_x {
-                let start_x = ox * 16;
-                let start_y = oy * 16;
-                let start_z = oz * 16;
+                let start_x = ox * bx;
+                let start_y = oy * by;
+                let start_z = oz * bz;
 
-                let end_x = (start_x + 16).min(size_x);
-                let end_y = (start_y + 16).min(size_y);
-                let end_z = (start_z + 16).min(size_z);
+                let end_x = (start_x + bx).min(size_x);
+                let end_y = (start_y + by).min(size_y);
+                let end_z = (start_z + bz).min(size_z);
 
                 let mut max = f32::NEG_INFINITY;
 
@@ -1454,8 +1468,6 @@ fn downsample_8x(
                             let p = input[idx];
                             if !p.is_nan() {
                                 max = p.max(max);
-                            } else {
-                                max = max.max(0.0);
                             }
                         }
                     }
@@ -1555,46 +1567,58 @@ where
                             todo!();
                         },
                         _ => {
-                            return Err("F32, U8, I16, I32, I64 only supported");
+                            return Err("F32 only supported");
                         }
                     };
 
-                    let downsampled_raw_bytes = downsample_8x(&data, d1 as usize, d2 as usize, d3 as usize)
+                    let bz = (d3 / 64).clamp(16, 128) as u32;
+                    let bx = 32 as u32;
+                    let by = 32 as u32;
+
+                    let downsampled_raw_bytes = downsample_8x(&data, d1 as usize, d2 as usize, d3 as usize, bx as usize, by as usize, bz as usize)
                         .iter()
                         .flat_map(|p| {
-                            p.to_be_bytes()
+                            p.to_le_bytes()
                         })
                         .collect::<Vec<u8>>();
+
+                    let original_dim = (d1, d2, d3);
+                    let padding = (
+                        (bx - (d1 % bx)) % bx,
+                        (by - (d2 % by)) % by,
+                        (bz - (d3 % bz)) % bz
+                    );
 
                     let wcs = hdu.wcs().map_err(|_| "wcs not found")?;
                     let texture = Texture::from_raw_bytes::<f32>(
                         &device,
                         &queue,
                         Some(&raw_bytes),
-                        (d1, d2, d3),
-                        (
-                            16 - (d1 % 16),
-                            16 - (d2 % 16),
-                            16 - (d3 % 16),
-                        ),
+                        original_dim,
+                        padding,
                         4,
                         "cube"
                     )?;
-                    let dim = (d1 + 16 - (d1 % 16), d2 + 16 - (d2 % 16), d3 + 16 - (d3 % 16));
 
                     let downsampled_texture = Texture::from_raw_bytes::<f32>(
                         &device,
                         &queue,
                         Some(&downsampled_raw_bytes),
                         (
-                            (d1 + 15) / 16,
-                            (d2 + 15) / 16,
-                            (d3 + 15) / 16
+                            (d1 + bx - 1) / bx,
+                            (d2 + by - 1) / by,
+                            (d3 + bz - 1) / bz
                         ),
                         (0, 0, 0),
                         4,
                         "downgraded_cube"
                     )?;
+
+                    let dim = (
+                        original_dim.0,
+                        original_dim.1,
+                        original_dim.2,
+                    );
 
                     // Build the downgrade resolued cube for faster raytracing.
                     // This cube will be first sampled to know whether it is interesting
@@ -1724,7 +1748,7 @@ pub fn estimate_default_cuts_from_variance(
     let mean = sum / (n as f32);
     let sigma = ((sum2 / (n as f32)) - mean*mean).sqrt();
 
-    (-2.0 * sigma)..(15.0 * sigma)
+    (sigma)..(15.0 * sigma)
 }
 
 pub fn first_and_last_percent<T>(

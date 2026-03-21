@@ -187,6 +187,19 @@ impl VolumetricRenderer {
                     },
                     count: None,
                 },
+                // block size
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
+                        ),
+                    },
+                    count: None,
+                },
             ],
             label: Some("texture_bind_group_layout"),
         });
@@ -293,6 +306,14 @@ impl VolumetricRenderer {
                         buffer: &buffers["slice_range"],
                         offset: 0,
                         size: wgpu::BufferSize::new(32),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["block_size"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
                     }),
                 },
             ],
@@ -561,6 +582,14 @@ impl VolumetricRenderer {
                         buffer: &buffers["slice_range"],
                         offset: 0,
                         size: wgpu::BufferSize::new(32),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["block_size"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(16),
                     }),
                 },
             ],
