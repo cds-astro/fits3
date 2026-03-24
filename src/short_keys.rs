@@ -25,7 +25,7 @@ impl ShortKeyCommands {
     /// - `f`: callback to call when combination matches
     pub(crate) fn process_key_event<F>(
         &self,
-        key: KeyCode,
+        key: PhysicalKey,
         event: &KeyEvent,
         require_ctrl: bool,
         f: F,
@@ -39,7 +39,7 @@ impl ShortKeyCommands {
         }
 
         // Match the key
-        if event.physical_key == PhysicalKey::Code(KeyCode::KeyO) {
+        if event.physical_key == key {
             let ctrl_pressed = if is_macos() {
                 self.modifiers.super_key() // Cmd
             } else {
