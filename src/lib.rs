@@ -13,6 +13,17 @@ use std::path::PathBuf;
 #[cfg(not(target_arch = "wasm32"))]
 use egui_file_dialog::FileDialog;
 
+#[derive(PartialEq)]
+#[derive(Debug)]
+enum Enum {
+    Turbo,
+    Viridis,
+    Inferno,
+    Plasma,
+    Rainbow,
+    Cubehelix,
+}
+
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalPosition,
@@ -118,6 +129,8 @@ struct State {
     #[cfg(not(target_arch = "wasm32"))]
     file_dialog: FileDialog,
     picked_file: Option<PathBuf>,
+    colormap_selected: Enum,
+
     // isosurface value
     isosurface: f32,
     // a diffuse color to show the isosurface with
@@ -293,7 +306,13 @@ impl State {
                 size: 16,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            }))
+            })),
+            ("colormap_selected", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Colormap Selected"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
         ].into_iter().collect();
 
         // Uniform buffer
@@ -406,6 +425,9 @@ impl State {
                 .add_file_filter_extensions("FITS cube", vec!["fits"])
                 .default_file_filter("FITS cube"),
             picked_file: None,
+
+            colormap_selected: Enum::Turbo,
+
             clock,
             egui_renderer,
             volumetric_renderer,
@@ -573,353 +595,383 @@ impl State {
                         }
                     }
                 }
+                
+                let colormap_selected = &mut self.colormap_selected;
 
                 let cube = self.cube.as_ref();
-                    let queue = &self.queue;
+                let queue = &self.queue;
 
-                    let mut slice_idx = self.slice_idx;
+                let mut slice_idx = self.slice_idx;
 
-                    let data_length = (self.max_cut_default - self.min_cut_default).abs();
-                    let datamin = self.min_cut_default - data_length;
-                    let datamax = self.max_cut_default + 5.0*data_length;
+                let data_length = (self.max_cut_default - self.min_cut_default).abs();
+                let datamin = self.min_cut_default - data_length;
+                let datamax = self.max_cut_default + 5.0*data_length;
 
-                    
-                    let buffers = &self.buffers;
-                    let moment0_texture = &mut self.moment0_texture;
-                    let naxis = &self.naxis;
-                    let ctx = self.egui_renderer.context();
+                
+                let buffers = &self.buffers;
+                let moment0_texture = &mut self.moment0_texture;
+                let naxis = &self.naxis;
+                let ctx = self.egui_renderer.context();
 
-                    if show_options {
-                        egui::SidePanel::left("fits3 options")
-                        .resizable(true)
-                        .show(ctx, |ui| {
-                            // Volumetric scope
-                            ui.add_enabled_ui(!show_isosurface, |ui| {
-                                ui.label("Cutout parameters");
-                                ui.add(
-                                    DoubleSlider::new(&mut min_cut, &mut max_cut, datamin..=datamax)
-                                        .scroll_factor((datamax - datamin) / 100.0)
-                                        .separation_distance((datamax - datamin) / 100.0)
-                                );
-
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::Slider::new(&mut min_cut, datamin..=datamax).text("Min cut"));
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::Slider::new(&mut max_cut, datamin..=datamax).text("Max cut"));
-                                });
-                                if ui.button("Reset cuts").clicked() {
-                                    min_cut = min_cut_default;
-                                    max_cut = max_cut_default;
-                                }
-                            });
-                            
-                            ui.separator();
-
-                            // Isosurface scope
-                            ui.checkbox(&mut show_isosurface, "Show isosurface");
-                            ui.add_enabled_ui(show_isosurface, |ui| {
-                                ui.add(egui::Slider::new(&mut isosurface, min_cut_default..=max_cut_default).text("Iso-value"));
-                                ui.label("Diffuse color");
-                                ui.color_edit_button_rgba_unmultiplied(&mut diffuse_color);
-                            });
-
-                            ui.separator();
-
-                            // Viewport scope
-                            ui.label("Viewport");
-                            ui.checkbox(&mut perspective, "Perspective");
-
-                            if ui.button("RA Dec (Front)").clicked() {
-                                new_view = Some((std::f32::consts::PI, 0.0));
-                            }
-
-                            if ui.button("-RA Dec (Back)").clicked() {
-                                new_view = Some((0.0, 0.0));
-                            }
-
-                            if ui.button("-V Dec (Left)").clicked() {
-                                new_view = Some((-std::f32::consts::PI/2.0, 0.0));
-                            }
-
-                            if ui.button("V Dec (Right)").clicked() {
-                                new_view = Some((std::f32::consts::PI/2.0, 0.0));
-                            }
-
-                            if ui.button("RA V (Top)").clicked() {
-                                new_view = Some((std::f32::consts::PI, std::f32::consts::PI * 0.5 - 1e-3));
-                            }
-
-                            if ui.button("RA -V (Bottom)").clicked() {
-                                new_view = Some((std::f32::consts::PI, -std::f32::consts::PI * 0.5 + 1e-3));
-                            }
-
-                            ui.separator();
-
-                            ui.checkbox(&mut show_unique_slice, "Slice selector");
-                            ui.add_enabled_ui(show_unique_slice, |ui| {
-                                ui.add(egui::Slider::new(&mut slice_idx, (fmin as u32)..=(fmax as u32)).text("slice idx"));
-                            });
-
-                            ui.separator();
-
-                            ui.add_enabled_ui(!show_unique_slice, |ui| {
-                                ui.label("Select a frequency range");
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::DragValue::new(&mut f1).speed(1.0));
-                                    ui.add(
-                                        DoubleSlider::new(&mut f1, &mut f2, fmin..=fmax)
-                                            .scroll_factor(1.0)
-                                    );
-                                    ui.add(egui::DragValue::new(&mut f2).speed(1.0));
-                                });
-
-                                ui.add(egui::Slider::new(&mut fov, fov_min..=fov_max as f32).text("Select FoV"));
-                                ui.add(egui::Slider::new(&mut ra, ra_min..=ra_max as f32).text("Select RA"));
-                                ui.add(egui::Slider::new(&mut dec, dec_min..=dec_max as f32).text("Select Dec"));
-
-                                ui.add_enabled_ui(cube.is_some(), |ui| {
-                                    // f1, f2, fov, ra, dec
-                                    ui.horizontal(|ui| {
-                                        if ui.button("Select").clicked() {
-                                            let l = [
-                                                (ra - fov * 0.5) / (naxis.0 as f32),
-                                                (dec - fov * 0.5) / (naxis.1 as f32),
-                                                f1 / (naxis.2 as f32)
-                                            ];
-                                            let h = [
-                                                (ra + fov * 0.5) / (naxis.0 as f32),
-                                                (dec + fov * 0.5) / (naxis.1 as f32),
-                                                f2 / (naxis.2 as f32)
-                                            ];
-
-                                            queue.write_buffer(
-                                                &buffers["zoom"],
-                                                0,
-                                                bytemuck::bytes_of(&[
-                                                    l[0], l[1], l[2], 0.0,
-                                                    h[0], h[1], h[2], 0.0
-                                                ]),
-                                            );
-
-                                            // set the new select limits
-                                            ra_min = ra - fov * 0.5;
-                                            ra_max = ra + fov * 0.5;
-                                            dec_min = dec - fov * 0.5;
-                                            dec_max = dec + fov * 0.5;
-                                            fmin = f1 as f32;
-                                            fmax = f2 as f32;
-                                            fov_min = 0.0;
-                                            fov_max = fov;
-
-                                            #[cfg(target_arch = "wasm32")]
-                                            {
-                                                let x_px = ra as f64;
-                                                let y_px = dec as f64;
-                                                let w_px = fov as f64;
-
-                                                if let Some(cube) = cube {
-                                                    let p = cube
-                                                        .wcs
-                                                        .unproj(&ImgXY::new(x_px, y_px))
-                                                        .unwrap();
-
-                                                    let fov = cube
-                                                        .wcs.field_of_view().0 * ((w_px as f64) / (naxis.0 as f64));
-
-                                                    let f1 = f1 / (naxis.2 as f32);
-                                                    let f2 = f2 / (naxis.2 as f32);
-
-                                                    ONSELECT.with(|f| {
-                                                        if let Some(cb) = &*f.borrow() {
-                                                            use js_sys::Array;
-                                                            let ra = p.lon().to_degrees();
-                                                            let dec = p.lat().to_degrees();
-
-                                                            let args = Array::new();
-                                                            args.push(&JsValue::from_f64(ra));
-                                                            args.push(&JsValue::from_f64(dec));
-                                                            args.push(&JsValue::from_f64(fov));
-                                                            args.push(&JsValue::from_f64(f1 as f64));
-                                                            args.push(&JsValue::from_f64(f2 as f64));
-                                                            cb.apply(&JsValue::NULL, &args).unwrap();
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        }
-
-                                        if ui.button("Reset").clicked() {
-                                            fov = naxis.0 as f32;
-                                            ra = (naxis.0 as f32) * 0.5;
-                                            dec = (naxis.1 as f32) * 0.5;
-                                            f1 = 0.0;
-                                            f2 = naxis.2 as f32;
-
-                                            ra_min = 0.0;
-                                            ra_max = naxis.0 as f32;
-                                            dec_min = 0.0;
-                                            dec_max = naxis.1 as f32;
-                                            fmin = 0.0;
-                                            fmax = naxis.2 as f32;
-                                            fov_min = 0.0;
-                                            fov_max = naxis.0 as f32;
-
-                                            queue.write_buffer(
-                                                &buffers["zoom"],
-                                                0,
-                                                bytemuck::bytes_of(&[
-                                                    0.0_f32, 0.0, 0.0, 0.0,
-                                                    1.0, 1.0, 1.0, 0.0
-                                                ]),
-                                            );
-                                        }
-                                    });
-                                });
-                            });
-
-                            ui.separator();
-
-                            ui.add_enabled_ui(cube.is_some(), |ui| {
-                                if let Some(cube) = cube {
-                                    ui.horizontal(|ui| {
-                                        if ui.button("Moment 0").clicked() {
-                                            if moment0_texture.is_none() {
-                                                let image = moment::compute_moment0(&cube);
-
-                                                let tex = ctx
-                                                    .load_texture(
-                                                        "moment0",
-                                                        egui::ColorImage::from_rgba_unmultiplied([naxis.0 as usize, naxis.1 as usize], &image),
-                                                        egui::TextureOptions::NEAREST,
-                                                    );
-
-                                                *moment0_texture = Some(tex);
-                                            }
-                                            show_moment0_window = true;
-                                        }
-
-                                        if ui.button("Moment 1").clicked() {
-                                            
-                                        }
-                                        if ui.button("Moment 2").clicked() {
-                                            
-                                        }
-                                    });
-                                }
-                            });
-
-                            if show_moment0_window {
-                                egui::Window::new("Moment 0")
-                                    .open(&mut show_moment0_window)
-                                    .show(ctx, |ui| {
-                                        if let Some(tex) = &moment0_texture {
-                                            let size = tex.size_vec2();
-
-                                            ui.image((tex.id(), size));
-                                        }
-                                    });
-                            }
-
-                            queue.write_buffer(
-                                &buffers["isosurface"],
-                                0,
-                                bytemuck::bytes_of(&[isosurface, 0.0, 0.0, 0.0]),
-                            );
-                            queue.write_buffer(
-                                &buffers["perspective"],
-                                0,
-                                bytemuck::bytes_of(&[if perspective { 1.0_f32 } else { 0.0_f32 }, 0.0, 0.0, 0.0]),
-                            );
-                            queue.write_buffer(
-                                &buffers["diffuse_color"],
-                                0,
-                                bytemuck::bytes_of(&diffuse_color),
-                            );
-                            queue.write_buffer(
-                                &buffers["cuts"],
-                                0,
-                                bytemuck::bytes_of(&[min_cut, max_cut, 0.0, 0.0]),
+                if show_options {
+                    egui::SidePanel::left("fits3 options")
+                    .resizable(true)
+                    .show(ctx, |ui| {
+                        // Volumetric scope
+                        ui.add_enabled_ui(!show_isosurface, |ui| {
+                            ui.label("Cutout parameters");
+                            ui.add(
+                                DoubleSlider::new(&mut min_cut, &mut max_cut, datamin..=datamax)
+                                    .scroll_factor((datamax - datamin) / 100.0)
+                                    .separation_distance((datamax - datamin) / 100.0)
                             );
 
-                            let (l, h) = if show_unique_slice {
-                                let l = [
-                                    (ra - fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
-                                    (dec - fov * 0.5 - dec_min) / (dec_max - dec_min) - 0.5,
-                                    (slice_idx as f32 - fmin) / (fmax - fmin) - 0.5,
-                                ];
-                                let h = [
-                                    (ra + fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
-                                    (dec + fov * 0.5 - dec_min) / (dec_max - dec_min) - 0.5,
-                                    (slice_idx as f32 + 1.0 - fmin) / (fmax - fmin) - 0.5,
-                                ];
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Slider::new(&mut min_cut, datamin..=datamax).text("Min cut"));
+                            });
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Slider::new(&mut max_cut, datamin..=datamax).text("Max cut"));
+                            });
+                            if ui.button("Reset cuts").clicked() {
+                                min_cut = min_cut_default;
+                                max_cut = max_cut_default;
+                            }
+                        });
+                        
+                        ui.separator();
 
-                                (l, h)
-                            } else {
-                                let l = [
-                                    (ra - fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
-                                    (dec - fov * 0.5 - dec_min) / (dec_max - dec_min) - 0.5,
-                                    (f1 as f32 - fmin) / (fmax - fmin) - 0.5,
-                                ];
-                                let h = [
-                                    (ra + fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
-                                    (dec + fov * 0.5 - dec_min) / (dec_max - dec_min) - 0.5,
-                                    (f2 as f32 - fmin) / (fmax - fmin) - 0.5,
-                                ];
-
-                                (l, h)
-                            };
-
-                            queue.write_buffer(
-                                &buffers["bbox"],
-                                0,
-                                bytemuck::bytes_of(&[
-                                    l[0], l[1], l[2], 0.0,
-                                    h[0], h[1], h[2], 0.0
-                                ]),
-                            );
+                        // Isosurface scope
+                        ui.checkbox(&mut show_isosurface, "Show isosurface");
+                        ui.add_enabled_ui(show_isosurface, |ui| {
+                            ui.add(egui::Slider::new(&mut isosurface, min_cut_default..=max_cut_default).text("Iso-value"));
+                            ui.label("Diffuse color");
+                            ui.color_edit_button_rgba_unmultiplied(&mut diffuse_color);
                         });
 
+                        ui.separator();
 
-                        if let Some((theta, delta)) = new_view {
-                            self.theta = theta as f64;
-                            self.delta = delta as f64;
-                            self.dtheta = 0.0;
-                            self.ddelta = 0.0;
-                            
-                            self.queue.write_buffer(
-                                &self.buffers["cam_origin"],
-                                0,
-                                bytemuck::bytes_of(&[theta, delta, 0.0, 0.0]),
-                            );
+                        // Viewport scope
+                        ui.label("Viewport");
+                        ui.checkbox(&mut perspective, "Perspective");
+
+                        if ui.button("RA Dec (Front)").clicked() {
+                            new_view = Some((std::f32::consts::PI, 0.0));
                         }
 
-                        self.isosurface = isosurface;
-                        self.perspective = perspective;
-                        self.diffuse_color = diffuse_color;
-                        self.show_isosurface = show_isosurface;
-                        self.show_unique_slice = show_unique_slice;
-                        self.min_cut = min_cut;
-                        self.max_cut = max_cut;
+                        if ui.button("-RA Dec (Back)").clicked() {
+                            new_view = Some((0.0, 0.0));
+                        }
 
-                        self.f1 = f1;
-                        self.f2 = f2;
-                        self.fov = fov;
-                        self.ra = ra;
-                        self.dec = dec;
-                        self.ra_min = ra_min;
-                        self.ra_max = ra_max;
-                        self.dec_min = dec_min;
-                        self.dec_max = dec_max;
-                        self.fmin = fmin;
-                        self.fmax = fmax;
-                        self.fov_min = fov_min;
-                        self.fov_max = fov_max;
+                        if ui.button("-V Dec (Left)").clicked() {
+                            new_view = Some((-std::f32::consts::PI/2.0, 0.0));
+                        }
 
-                        self.slice_idx = slice_idx;
+                        if ui.button("V Dec (Right)").clicked() {
+                            new_view = Some((std::f32::consts::PI/2.0, 0.0));
+                        }
 
-                        self.show_moment0_window = show_moment0_window;
+                        if ui.button("RA V (Top)").clicked() {
+                            new_view = Some((std::f32::consts::PI, std::f32::consts::PI * 0.5 - 1e-3));
+                        }
+
+                        if ui.button("RA -V (Bottom)").clicked() {
+                            new_view = Some((std::f32::consts::PI, -std::f32::consts::PI * 0.5 + 1e-3));
+                        }
+
+                        ui.separator();
+
+                        egui::ComboBox::from_label("Select colormap")
+                            .selected_text(format!("{:?}",colormap_selected))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(colormap_selected, Enum::Turbo, "Turbo");
+                                ui.selectable_value(colormap_selected, Enum::Viridis, "Viridis");
+                                ui.selectable_value(colormap_selected, Enum::Inferno, "Inferno");
+                                ui.selectable_value(colormap_selected, Enum::Plasma, "Plasma");
+                                ui.selectable_value(colormap_selected, Enum::Rainbow, "Rainbow");
+                                ui.selectable_value(colormap_selected, Enum::Cubehelix, "Cubehelix");
+                            });
+
+                        ui.separator();
+
+                        ui.checkbox(&mut show_unique_slice, "Slice selector");
+                        ui.add_enabled_ui(show_unique_slice, |ui| {
+                            ui.add(egui::Slider::new(&mut slice_idx, (fmin as u32)..=(fmax as u32)).text("slice idx"));
+                        });
+
+                        ui.separator();
+
+                        ui.add_enabled_ui(!show_unique_slice, |ui| {
+                            ui.label("Select a frequency range");
+                            ui.horizontal(|ui| {
+                                ui.add(egui::DragValue::new(&mut f1).speed(1.0));
+                                ui.add(
+                                    DoubleSlider::new(&mut f1, &mut f2, fmin..=fmax)
+                                        .scroll_factor(1.0)
+                                );
+                                ui.add(egui::DragValue::new(&mut f2).speed(1.0));
+                            });
+
+                            ui.add(egui::Slider::new(&mut fov, fov_min..=fov_max as f32).text("Select FoV"));
+                            ui.add(egui::Slider::new(&mut ra, ra_min..=ra_max as f32).text("Select RA"));
+                            ui.add(egui::Slider::new(&mut dec, dec_min..=dec_max as f32).text("Select Dec"));
+
+                            ui.add_enabled_ui(cube.is_some(), |ui| {
+                                // f1, f2, fov, ra, dec
+                                ui.horizontal(|ui| {
+                                    if ui.button("Select").clicked() {
+                                        let l = [
+                                            (ra - fov * 0.5) / (naxis.0 as f32),
+                                            (dec - fov * 0.5) / (naxis.1 as f32),
+                                            f1 / (naxis.2 as f32)
+                                        ];
+                                        let h = [
+                                            (ra + fov * 0.5) / (naxis.0 as f32),
+                                            (dec + fov * 0.5) / (naxis.1 as f32),
+                                            f2 / (naxis.2 as f32)
+                                        ];
+
+                                        queue.write_buffer(
+                                            &buffers["zoom"],
+                                            0,
+                                            bytemuck::bytes_of(&[
+                                                l[0], l[1], l[2], 0.0,
+                                                h[0], h[1], h[2], 0.0
+                                            ]),
+                                        );
+
+                                        // set the new select limits
+                                        ra_min = ra - fov * 0.5;
+                                        ra_max = ra + fov * 0.5;
+                                        dec_min = dec - fov * 0.5;
+                                        dec_max = dec + fov * 0.5;
+                                        fmin = f1 as f32;
+                                        fmax = f2 as f32;
+                                        fov_min = 0.0;
+                                        fov_max = fov;
+
+                                        #[cfg(target_arch = "wasm32")]
+                                        {
+                                            let x_px = ra as f64;
+                                            let y_px = dec as f64;
+                                            let w_px = fov as f64;
+
+                                            if let Some(cube) = cube {
+                                                let p = cube
+                                                    .wcs
+                                                    .unproj(&ImgXY::new(x_px, y_px))
+                                                    .unwrap();
+
+                                                let fov = cube
+                                                    .wcs.field_of_view().0 * ((w_px as f64) / (naxis.0 as f64));
+
+                                                let f1 = f1 / (naxis.2 as f32);
+                                                let f2 = f2 / (naxis.2 as f32);
+
+                                                ONSELECT.with(|f| {
+                                                    if let Some(cb) = &*f.borrow() {
+                                                        use js_sys::Array;
+                                                        let ra = p.lon().to_degrees();
+                                                        let dec = p.lat().to_degrees();
+
+                                                        let args = Array::new();
+                                                        args.push(&JsValue::from_f64(ra));
+                                                        args.push(&JsValue::from_f64(dec));
+                                                        args.push(&JsValue::from_f64(fov));
+                                                        args.push(&JsValue::from_f64(f1 as f64));
+                                                        args.push(&JsValue::from_f64(f2 as f64));
+                                                        cb.apply(&JsValue::NULL, &args).unwrap();
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }
+
+                                    if ui.button("Reset").clicked() {
+                                        fov = naxis.0 as f32;
+                                        ra = (naxis.0 as f32) * 0.5;
+                                        dec = (naxis.1 as f32) * 0.5;
+                                        f1 = 0.0;
+                                        f2 = naxis.2 as f32;
+
+                                        ra_min = 0.0;
+                                        ra_max = naxis.0 as f32;
+                                        dec_min = 0.0;
+                                        dec_max = naxis.1 as f32;
+                                        fmin = 0.0;
+                                        fmax = naxis.2 as f32;
+                                        fov_min = 0.0;
+                                        fov_max = naxis.0 as f32;
+
+                                        queue.write_buffer(
+                                            &buffers["zoom"],
+                                            0,
+                                            bytemuck::bytes_of(&[
+                                                0.0_f32, 0.0, 0.0, 0.0,
+                                                1.0, 1.0, 1.0, 0.0
+                                            ]),
+                                        );
+                                    }
+                                });
+                            });
+                        });
+
+                        ui.separator();
+
+                        ui.add_enabled_ui(cube.is_some(), |ui| {
+                            if let Some(cube) = cube {
+                                ui.horizontal(|ui| {
+                                    if ui.button("Moment 0").clicked() {
+                                        if moment0_texture.is_none() {
+                                            let image = moment::compute_moment0(&cube);
+
+                                            let tex = ctx
+                                                .load_texture(
+                                                    "moment0",
+                                                    egui::ColorImage::from_rgba_unmultiplied([naxis.0 as usize, naxis.1 as usize], &image),
+                                                    egui::TextureOptions::NEAREST,
+                                                );
+
+                                            *moment0_texture = Some(tex);
+                                        }
+                                        show_moment0_window = true;
+                                    }
+
+                                    if ui.button("Moment 1").clicked() {
+                                        
+                                    }
+                                    if ui.button("Moment 2").clicked() {
+                                        
+                                    }
+                                });
+                            }
+                        });
+
+                        if show_moment0_window {
+                            egui::Window::new("Moment 0")
+                                .open(&mut show_moment0_window)
+                                .show(ctx, |ui| {
+                                    if let Some(tex) = &moment0_texture {
+                                        let size = tex.size_vec2();
+
+                                        ui.image((tex.id(), size));
+                                    }
+                                });
+                        }
+
+                        queue.write_buffer(
+                            &buffers["isosurface"],
+                            0,
+                            bytemuck::bytes_of(&[isosurface, 0.0, 0.0, 0.0]),
+                        );
+                        queue.write_buffer(
+                            &buffers["perspective"],
+                            0,
+                            bytemuck::bytes_of(&[if perspective { 1.0_f32 } else { 0.0_f32 }, 0.0, 0.0, 0.0]),
+                        );
+                        queue.write_buffer(
+                            &buffers["diffuse_color"],
+                            0,
+                            bytemuck::bytes_of(&diffuse_color),
+                        );
+                        queue.write_buffer(
+                            &buffers["cuts"],
+                            0,
+                            bytemuck::bytes_of(&[min_cut, max_cut, 0.0, 0.0]),
+                        );
+
+                        let colormap_value = match colormap_selected {
+                            Enum::Turbo => 0_i32,
+                            Enum::Viridis => 1,
+                            Enum::Inferno => 2,
+                            Enum::Plasma => 3,
+                            Enum::Rainbow => 4,
+                            Enum::Cubehelix => 5,
+                        };
+
+                        queue.write_buffer(
+                            &buffers["colormap_selected"],
+                            0,
+                            bytemuck::bytes_of(&[colormap_value, 0, 0, 0]),
+                        );
+
+                        let (l, h) = if show_unique_slice {
+                            let l = [
+                                (ra - fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
+                                (dec - fov * 0.5 - dec_min) / (dec_max - dec_min) - 0.5,
+                                (slice_idx as f32 - fmin) / (fmax - fmin) - 0.5,
+                            ];
+                            let h = [
+                                (ra + fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
+                                (dec + fov * 0.5 - dec_min) / (dec_max - dec_min) - 0.5,
+                                (slice_idx as f32 + 1.0 - fmin) / (fmax - fmin) - 0.5,
+                            ];
+
+                            (l, h)
+                        } else {
+                            let l = [
+                                (ra - fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
+                                (dec - fov * 0.5 - dec_min) / (dec_max - dec_min) - 0.5,
+                                (f1 as f32 - fmin) / (fmax - fmin) - 0.5,
+                            ];
+                            let h = [
+                                (ra + fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
+                                (dec + fov * 0.5 - dec_min) / (dec_max - dec_min) - 0.5,
+                                (f2 as f32 - fmin) / (fmax - fmin) - 0.5,
+                            ];
+
+                            (l, h)
+                        };
+
+                        queue.write_buffer(
+                            &buffers["bbox"],
+                            0,
+                            bytemuck::bytes_of(&[
+                                l[0], l[1], l[2], 0.0,
+                                h[0], h[1], h[2], 0.0
+                            ]),
+                        );
+                    });
+
+
+                    if let Some((theta, delta)) = new_view {
+                        self.theta = theta as f64;
+                        self.delta = delta as f64;
+                        self.dtheta = 0.0;
+                        self.ddelta = 0.0;
+                        
+                        self.queue.write_buffer(
+                            &self.buffers["cam_origin"],
+                            0,
+                            bytemuck::bytes_of(&[theta, delta, 0.0, 0.0]),
+                        );
                     }
+
+                    self.isosurface = isosurface;
+                    self.perspective = perspective;
+                    self.diffuse_color = diffuse_color;
+                    self.show_isosurface = show_isosurface;
+                    self.show_unique_slice = show_unique_slice;
+                    self.min_cut = min_cut;
+                    self.max_cut = max_cut;
+
+                    self.f1 = f1;
+                    self.f2 = f2;
+                    self.fov = fov;
+                    self.ra = ra;
+                    self.dec = dec;
+                    self.ra_min = ra_min;
+                    self.ra_max = ra_max;
+                    self.dec_min = dec_min;
+                    self.dec_max = dec_max;
+                    self.fmin = fmin;
+                    self.fmax = fmax;
+                    self.fov_min = fov_min;
+                    self.fov_max = fov_max;
+
+                    self.slice_idx = slice_idx;
+
+                    self.show_moment0_window = show_moment0_window;
+                }
 
                 self.show_options = show_options;
 
