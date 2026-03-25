@@ -42,15 +42,18 @@ uniform Size {
     vec4 cube_size;
 };
 layout(set = 0, binding = 13)
-uniform Slices {
-    vec2 sx;
-    vec2 sy;
-    vec2 sz;
-    vec2 sw;
+uniform BBox {
+    vec3 l;
+    vec3 h;
 };
 layout(set = 0, binding = 14)
 uniform BlockSize {
     vec4 block_size;
+};
+layout(set = 0, binding = 15)
+uniform Zoom {
+    vec3 ls;
+    vec3 hs;
 };
 
 
@@ -210,10 +213,6 @@ vec3 grad4(vec3 p) {
 }
 
 void main() {
- // we define our cube as 2 bounds vertices, l and h
-    vec3 l = max(vec3((sx.x / cube_size.x) - 0.5, (sy.x / cube_size.y) - 0.5, (sz.x / cube_size.z) - 0.5), vec3(-0.5));
-    vec3 h = min(vec3((sx.y / cube_size.x) - 0.5, (sy.y / cube_size.y) - 0.5, (sz.y / cube_size.z) - 0.5), vec3(0.5));
-
     vec3 cam_origin = lonlat2xyz(origin.x, origin.y);
 
     // vector from camera origin to the look
@@ -287,7 +286,7 @@ void main() {
 
     while (t < t_f && v < isosurface.x) {
         vec3 uv = (cell + 0.5) * coarse_inv;
-        float max_v = probe_downsampled_cube(uv);
+        float max_v = probe_downsampled_cube(ls + uv * (hs - ls));
 
         if (max_v > isosurface.x) {
             float boundary = min(tMax.x, min(tMax.y, tMax.z));
@@ -295,7 +294,7 @@ void main() {
  
             while(v < isosurface.x && t < limit) {
                 vv = v;
-                v = probe_cube(p * f);
+                v = probe_cube(ls + p * f * (hs - ls));
                 num_sampling += step;
 
                 if (v > isosurface.x)
@@ -331,8 +330,8 @@ void main() {
     //vec3 L = normalize(vec3(10.0, 10.0, 10.0) - ps);
 
     //float c = clamp((isosurface.x - cut.x) / (cut.y - cut.x), 0.0, 1.0);
-    vec3 N = grad4(p * f);
-    vec3 light_dir = normalize(-vec3(10.0, 10.0, 10.0));
+    vec3 N = grad4(ls + p * f * (hs - ls));
+    vec3 light_dir = -vec3(0.577350269, 0.577350269, 0.577350269);
     float diffuse = max(dot(N, light_dir), 0.0);
     vec4 color = vec4(diffuse_color.rgb * 0.05 + diffuse_color.rgb * diffuse, diffuse_color.a);
     //f_color = vec4(cc.rgb*0.05 + cc.rgb * max(dot(N, l), 0.0), 1.0);

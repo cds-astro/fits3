@@ -41,17 +41,19 @@ uniform Size {
     vec4 cube_size;
 };
 layout(set = 0, binding = 13)
-uniform Slices {
-    vec2 sx;
-    vec2 sy;
-    vec2 sz;
-    vec2 sw;
+uniform BBox {
+    vec3 l;
+    vec3 h;
 };
 layout(set = 0, binding = 14)
 uniform BlockSize {
     vec4 block_size;
 };
-
+layout(set = 0, binding = 15)
+uniform Zoom {
+    vec3 ls;
+    vec3 hs;
+};
 
 vec3 lonlat2xyz(float lon, float lat) {
     float lat_s = sin(lat);
@@ -84,25 +86,6 @@ float colormap_blue(float x) {
        return -4.0 * x + 2.5;
     }
 }
-/*
-vec3 colormap_viridis(float t) {
-    // Clamp input to [0,1]
-    t = clamp(t, 0.0, 1.0);
-
-    // Coefficients from the original viridis colormap (Matplotlib)
-    const vec3 c0 = vec3(0.280, 0.165, 0.476);
-    const vec3 c1 = vec3(0.110, 0.573, 0.664);
-    const vec3 c2 = vec3(0.478, 0.821, 0.318);
-
-    // Interpolation logic
-    if (t < 0.5) {
-        float f = smoothstep(0.0, 0.5, t);
-        return mix(c0, c1, f);
-    } else {
-        float f = smoothstep(0.5, 1.0, t);
-        return mix(c1, c2, f);
-    }
-}*/
 
 vec3 colormap_viridis(float t) {
     vec3 c0 = vec3(0.2777273272234177, 0.005407344544966578, 0.3340998053353061);
@@ -183,10 +166,6 @@ float probe_downsampled_cube(vec3 p) {
 }
 
 void main() {
-    // we define our cube as 2 bounds vertices, l and h
-    vec3 l = max(vec3((sx.x / cube_size.x) - 0.5, (sy.x / cube_size.y) - 0.5, (sz.x / cube_size.z) - 0.5), vec3(-0.5));
-    vec3 h = min(vec3((sx.y / cube_size.x) - 0.5, (sy.y / cube_size.y) - 0.5, (sz.y / cube_size.z) - 0.5), vec3(0.5));
-
     vec3 cam_origin = lonlat2xyz(origin.x, origin.y);
 
     // vector from camera origin to the look
@@ -205,8 +184,8 @@ void main() {
     // orthographic perspective
     vec3 r = mix(normalize(p_cam - cam_origin), cam_dir, float(perspective.x == 0.0));
 
-    vec3 t_low = (l - p_cam) / r;
-    vec3 t_high = (h - p_cam) / r;
+    vec3 t_low = (l.xyz - p_cam) / r;
+    vec3 t_high = (h.xyz - p_cam) / r;
 
     vec3 t_close = min(t_low, t_high);
     vec3 t_far = max(t_low, t_high);
@@ -255,14 +234,14 @@ void main() {
 
     while (t < t_f && intensity < cut.y) {
         vec3 uv = (cell + 0.5) * coarse_inv;
-        float max_v = probe_downsampled_cube(uv);
+        float max_v = probe_downsampled_cube(ls + uv * (hs - ls));
 
         if (max_v > intensity) {
             float boundary = min(tMax.x, min(tMax.y, tMax.z));
             float limit = min(boundary, t_f);
 
             while(t < limit && intensity < cut.y) {
-                float v = probe_cube(p * f);
+                float v = probe_cube(ls + p * f * (hs - ls));
                 intensity = max(intensity, v);
 
                 num_sampling += 1;

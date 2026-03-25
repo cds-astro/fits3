@@ -174,7 +174,7 @@ impl VolumetricRenderer {
                     },
                     count: None,
                 },
-                // slice ranges
+                // bbox
                 wgpu::BindGroupLayoutEntry {
                     binding: 13,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -196,6 +196,19 @@ impl VolumetricRenderer {
                         has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(
                             std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
+                        ),
+                    },
+                    count: None,
+                },
+                // zoom scaling factors
+                wgpu::BindGroupLayoutEntry {
+                    binding: 15,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            (std::mem::size_of::<f32>() * 8) as wgpu::BufferAddress,
                         ),
                     },
                     count: None,
@@ -303,7 +316,7 @@ impl VolumetricRenderer {
                 wgpu::BindGroupEntry {
                     binding: 13,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["slice_range"],
+                        buffer: &buffers["bbox"],
                         offset: 0,
                         size: wgpu::BufferSize::new(32),
                     }),
@@ -314,6 +327,14 @@ impl VolumetricRenderer {
                         buffer: &buffers["block_size"],
                         offset: 0,
                         size: wgpu::BufferSize::new(16),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["zoom"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(32),
                     }),
                 },
             ],
@@ -579,7 +600,7 @@ impl VolumetricRenderer {
                 wgpu::BindGroupEntry {
                     binding: 13,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["slice_range"],
+                        buffer: &buffers["bbox"],
                         offset: 0,
                         size: wgpu::BufferSize::new(32),
                     }),
@@ -590,6 +611,14 @@ impl VolumetricRenderer {
                         buffer: &buffers["block_size"],
                         offset: 0,
                         size: wgpu::BufferSize::new(16),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffers["zoom"],
+                        offset: 0,
+                        size: wgpu::BufferSize::new(32),
                     }),
                 },
             ],

@@ -94,11 +94,21 @@ struct State {
     // current max cut
     max_cut: f32,
 
-    freq_min: f32,
-    freq_max: f32,
+    // Selection
+    f1: f32,
+    f2: f32,
+    fmin: f32,
+    fmax: f32,
     fov: f32,
+    fov_min: f32,
+    fov_max: f32,
     ra: f32,
+    ra_min: f32,
+    ra_max: f32,
     dec: f32,
+    dec_min: f32,
+    dec_max: f32,
+
 
     // isosurface value
     isosurface: f32,
@@ -240,8 +250,14 @@ impl State {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })),
-            ("slice_range", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Slice range"),
+            ("bbox", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Bbox of drawing"),
+                size: 32,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })),
+            ("zoom", device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Bbox of drawing"),
                 size: 32,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
@@ -298,9 +314,15 @@ impl State {
             bytemuck::bytes_of(&[0.0 as f32, 0.0, 0.0, 0.0]),
         );
         queue.write_buffer(
-            &buffers["slice_range"],
+            &buffers["bbox"],
             0,
-            bytemuck::bytes_of(&[0.0 as f32, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0]),
+            bytemuck::bytes_of(&[-0.5 as f32, -0.5, -0.5, 0.0, 0.5, 0.5, 0.5, 0.0]),
+        );
+
+        queue.write_buffer(
+            &buffers["zoom"],
+            0,
+            bytemuck::bytes_of(&[0.0 as f32, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]),
         );
 
         queue.write_buffer(
@@ -389,11 +411,19 @@ impl State {
             min_cut: 0.0,
             max_cut: 1.0,
 
-            freq_min: 0.0,
-            freq_max: 100.0,
+            f1: 0.0,
+            f2: 100.0,
+            fmin: 0.0,
+            fmax: 100.0,
             fov: 5.0,
+            fov_min: 0.0,
+            fov_max: 100.0,
             ra: 50.0,
+            ra_min: 0.0,
+            ra_max: 100.0,
             dec: 50.0,
+            dec_min: 0.0,
+            dec_max: 100.0,
 
             perspective: false,
             isosurface: 0.0,
@@ -504,11 +534,19 @@ impl State {
                 let min_cut_default = self.min_cut_default;
                 let max_cut_default = self.max_cut_default;
 
-                let mut freq_min = self.freq_min;
-                let mut freq_max = self.freq_max;
+                let mut f1 = self.f1;
+                let mut f2 = self.f2;
                 let mut fov = self.fov;
                 let mut ra = self.ra;
                 let mut dec = self.dec;
+                let mut ra_min = self.ra_min;
+                let mut ra_max = self.ra_max;
+                let mut dec_min = self.dec_min;
+                let mut dec_max = self.dec_max;
+                let mut fmin = self.fmin;
+                let mut fmax = self.fmax;
+                let mut fov_min = self.fov_min;
+                let mut fov_max = self.fov_max;
                 let naxis = &self.naxis;
                 let mut show_moment0_window = self.show_moment0_window;
                 let mut moment0_texture = &mut self.moment0_texture;
@@ -613,24 +651,53 @@ impl State {
                                 ui.label("Select a frequency range");
                                 ui.add_sized(
                                     [ui.available_width(), 0.0],
-                                    DoubleSlider::new(&mut freq_min, &mut freq_max, 0.0..=naxis.2 as f32)
+                                    DoubleSlider::new(&mut f1, &mut f2, fmin..=fmax)
                                         .width(ui.available_width())
-                                        //.separation_distance((datamax - datamin) / 100.0)
                                 );
 
-                                ui.add(egui::Slider::new(&mut fov, 0.0..=naxis.0 as f32).text("Select FoV"));
-                                ui.add(egui::Slider::new(&mut ra, 0.0..=naxis.0 as f32).text("Select RA"));
-                                ui.add(egui::Slider::new(&mut dec, 0.0..=naxis.1 as f32).text("Select Dec"));
+                                ui.add(egui::Slider::new(&mut fov, fov_min..=fov_max as f32).text("Select FoV"));
+                                ui.add(egui::Slider::new(&mut ra, ra_min..=ra_max as f32).text("Select RA"));
+                                ui.add(egui::Slider::new(&mut dec, dec_min..=dec_max as f32).text("Select Dec"));
 
                                 ui.horizontal(|ui| {
-                                    // freq_min, freq_max, fov, ra, dec
+                                    // f1, f2, fov, ra, dec
                                     if ui.button("Select").clicked() {
+                                        let l = [
+                                            (ra - fov * 0.5) / (naxis.0 as f32),
+                                            (dec - fov * 0.5) / (naxis.1 as f32),
+                                            f1 / (naxis.2 as f32)
+                                        ];
+                                        let h = [
+                                            (ra + fov * 0.5) / (naxis.0 as f32),
+                                            (dec + fov * 0.5) / (naxis.1 as f32),
+                                            f2 / (naxis.2 as f32)
+                                        ];
+
+                                        queue.write_buffer(
+                                            &buffers["zoom"],
+                                            0,
+                                            bytemuck::bytes_of(&[
+                                                l[0], l[1], l[2], 0.0,
+                                                h[0], h[1], h[2], 0.0
+                                            ]),
+                                        );
+
+                                        // set the new select limits
+                                        ra_min = ra - fov * 0.5;
+                                        ra_max = ra + fov * 0.5;
+                                        dec_min = dec - fov * 0.5;
+                                        dec_max = dec + fov * 0.5;
+                                        fmin = f1 as f32;
+                                        fmax = f2 as f32;
+                                        fov_min = 0.0;
+                                        fov_max = fov;
+
                                         let x_px = ra as f64;
                                         let y_px = dec as f64;
                                         let w_px = fov as f64;
 
-                                        let freq_min = freq_min / (naxis.2 as f32);
-                                        let freq_max = freq_max / (naxis.2 as f32);
+                                        let f1 = f1 / (naxis.2 as f32);
+                                        let f2 = f2 / (naxis.2 as f32);
 
                                         let p = cube
                                             .wcs
@@ -661,19 +728,37 @@ impl State {
                                                 args.push(&JsValue::from_f64(ra));
                                                 args.push(&JsValue::from_f64(dec));
                                                 args.push(&JsValue::from_f64(fov));
-                                                args.push(&JsValue::from_f64(freq_min as f64));
-                                                args.push(&JsValue::from_f64(freq_max as f64));
+                                                args.push(&JsValue::from_f64(f1 as f64));
+                                                args.push(&JsValue::from_f64(f2 as f64));
                                                 cb.apply(&JsValue::NULL, &args).unwrap();
                                             }
                                         });
                                     }
 
-                                    if ui.button("Cancel").clicked() {
+                                    if ui.button("Reset").clicked() {
                                         fov = naxis.0 as f32;
                                         ra = (naxis.0 as f32) * 0.5;
                                         dec = (naxis.1 as f32) * 0.5;
-                                        freq_min = 0.0;
-                                        freq_max = naxis.2 as f32;
+                                        f1 = 0.0;
+                                        f2 = naxis.2 as f32;
+
+                                        ra_min = 0.0;
+                                        ra_max = naxis.0 as f32;
+                                        dec_min = 0.0;
+                                        dec_max = naxis.1 as f32;
+                                        fmin = 0.0;
+                                        fmax = naxis.2 as f32;
+                                        fov_min = 0.0;
+                                        fov_max = naxis.0 as f32;
+
+                                        queue.write_buffer(
+                                            &buffers["zoom"],
+                                            0,
+                                            bytemuck::bytes_of(&[
+                                                0.0_f32, 0.0, 0.0, 0.0,
+                                                1.0, 1.0, 1.0, 0.0
+                                            ]),
+                                        );
                                     }
                                 });
                             });
@@ -748,18 +833,27 @@ impl State {
                                 (
                                     (ra - fov * 0.5)..(ra + fov * 0.5),
                                     (dec - fov * 0.5)..(dec + fov * 0.5),
-                                    (freq_min as f32)..(freq_max as f32)
+                                    (f1 as f32)..(f2 as f32)
                                 )
                             };
 
+                            let l = [
+                                (sx.start - ra_min) / (ra_max - ra_min) - 0.5,
+                                (sy.start - dec_min) / (dec_max - dec_min) - 0.5,
+                                (sz.start - fmin) / (fmax - fmin) - 0.5,
+                            ];
+                            let h = [
+                                (sx.end - ra_min) / (ra_max - ra_min) - 0.5,
+                                (sy.end - dec_min) / (dec_max - dec_min) - 0.5,
+                                (sz.end - fmin) / (fmax - fmin) - 0.5,
+                            ];
+
                             queue.write_buffer(
-                                &buffers["slice_range"],
+                                &buffers["bbox"],
                                 0,
                                 bytemuck::bytes_of(&[
-                                    sx.start as f32, sx.end as f32,
-                                    sy.start as f32, sy.end as f32,
-                                    sz.start as f32, sz.end as f32,
-                                    0.0, 0.0
+                                    l[0], l[1], l[2], 0.0,
+                                    h[0], h[1], h[2], 0.0
                                 ]),
                             );
                         });
@@ -785,11 +879,19 @@ impl State {
                         self.min_cut = min_cut;
                         self.max_cut = max_cut;
 
-                        self.freq_min = freq_min;
-                        self.freq_max = freq_max;
+                        self.f1 = f1;
+                        self.f2 = f2;
                         self.fov = fov;
                         self.ra = ra;
                         self.dec = dec;
+                        self.ra_min = ra_min;
+                        self.ra_max = ra_max;
+                        self.dec_min = dec_min;
+                        self.dec_max = dec_max;
+                        self.fmin = fmin;
+                        self.fmax = fmax;
+                        self.fov_min = fov_min;
+                        self.fov_max = fov_max;
 
                         self.slice_idx = slice_idx;
 
@@ -854,23 +956,31 @@ impl State {
 
         self.ra = (cube.dim.0 as f32) * 0.5;
         self.dec = (cube.dim.1 as f32) * 0.5;
-        self.freq_min = 0.0;
-        self.freq_max = cube.dim.2 as f32;
+        self.f1 = 0.0;
+        self.f2 = cube.dim.2 as f32;
         self.fov = cube.dim.0 as f32;
         self.naxis = cube.dim;
+        self.ra_min = 0.0;
+        self.ra_max = cube.dim.0 as f32;
+        self.dec_min = 0.0;
+        self.dec_max = cube.dim.1 as f32;
+        self.fmin = 0.0;
+        self.fmax = cube.dim.2 as f32;
+        self.fov_min = 0.0;
+        self.fov_max = cube.dim.0 as f32;
 
         if !self.show_unique_slice {
             self.queue.write_buffer(
-                &self.buffers["slice_range"],
+                &self.buffers["bbox"],
                 0,
                 bytemuck::bytes_of(&[
-                    0.0, cube.dim.0 as f32,
-                    0.0, cube.dim.1 as f32,
-                    0.0, cube.dim.2 as f32,
-                    0.0, 0.0
+                    -0.5_f32, -0.5, -0.5, 0.0,
+                    0.5, 0.5, 0.5, 0.0
                 ]),
             );
         }
+
+        // TODO: reset the zoom scaling as well to see the whole cube 
 
         self.min_cut_default = cube.mincut;
         self.max_cut_default = cube.maxcut;
