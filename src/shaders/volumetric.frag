@@ -27,11 +27,12 @@ uniform Volume {
 layout(set = 0, binding = 6)
 uniform RenderParams {
     vec3 cut_iso;
-    int colormap; 
+    int colormap;
     // x,y = cut
     // z = isosurface
     // w = colormap_selected (cast to float)
     vec4 diffuse_color;
+    int transfer;
 };
 
 layout(set = 0, binding = 7)
@@ -51,6 +52,10 @@ uniform Interaction {
 layout(set = 0, binding = 16)
 uniform Colormap_selected {
     ivec4 colormap_selected;
+};
+layout(set = 0, binding = 12)
+uniform Function_selected {
+    ivec4 function_selected;
 };
 
 
@@ -171,31 +176,8 @@ vec3 colormap_cubehelix(float t) {
                       (0.031276+t*(-0.925911+t*(49.839030+t*(-323.015906+t*(847.188116+t*(-1048.463499+t*(606.532787+t*-130.108084)))))))), 0.0, 1.0);
 }
 
-/*
-vec3 colormap_turbo(in float x) {
-    const vec4 kRedVec4 = vec4(0.13572138, 4.61539260, -42.66032258, 132.13108234);
-    const vec4 kGreenVec4 = vec4(0.09140261, 2.19418839, 4.84296658, -14.18503333);
-    const vec4 kBlueVec4 = vec4(0.10667330, 12.64194608, -60.58204836, 110.36276771);
-    const vec2 kRedVec2 = vec2(-152.94239396, 59.28637943);
-    const vec2 kGreenVec2 = vec2(4.27729857, 2.82956604);
-    const vec2 kBlueVec2 = vec2(-89.90310912, 27.34824973);
-  
-    x = clamp(x,0.0,1.0);
-    vec4 v4 = vec4( 1.0, x, x * x, x * x * x);
-    vec2 v2 = v4.zw * v4.z;
-    return vec3(
-        dot(v4, kRedVec4)   + dot(v2, kRedVec2),
-        dot(v4, kGreenVec4) + dot(v2, kGreenVec2),
-        dot(v4, kBlueVec4)  + dot(v2, kBlueVec2)
-    );
-}*/
-
 vec4 colormap(float x) {
-<<<<<<< Updated upstream
-    switch(colormap_selected.x) {
-=======
     switch(colormap) {
->>>>>>> Stashed changes
         case 1:
             return vec4(colormap_viridis2(x),1.0);
         case 2:
@@ -211,6 +193,22 @@ vec4 colormap(float x) {
             float g = clamp(colormap_green(x), 0.0, 1.0);
             float b = clamp(colormap_blue(x), 0.0, 1.0);
             return vec4(r, g, b, 1.0);
+    }
+}
+
+
+float transfer(float x) {
+    switch(transfer) {
+        case 1:
+            return sqrt(x);
+        case 2:
+            return pow(x,2);
+        case 3:
+            return asinh(10.0*x)/3.0;
+        case 4:
+            return log(1000.0*x + 1.0)/log(1000.0);
+        default:
+            return x;
     }
 }
 
@@ -356,9 +354,6 @@ void main() {
     }
 
     intensity = clamp((intensity - cut_iso.x) / (cut_iso.y - cut_iso.x), 0.0, 1.0);
-    //f_color = vec4(vec3(num_sampling) / 1000.0, 1.0);
-    //f_color = vec4(vec3(1.0, 1.0, 0.0), 1.0);
-    f_color = colormap(intensity);
-    //f_color = colormap_viridis(intensity);
+    f_color = colormap(transfer(intensity));
 }
  
