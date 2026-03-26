@@ -23,6 +23,7 @@ egui-winit = { version = "0.33.3", default-features = false}
 # and our wgpu
 egui-wgpu = { version = "0.33.3", default-features = false }
 egui_double_slider = "1.0.0"
+egui-file-dialog = "0.12.0"
 
 
 [lib]

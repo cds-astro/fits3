@@ -230,7 +230,7 @@ void main() {
     tDelta = mix(tDelta, vec3(1e30), zero_dir);
     tMax   = mix(tMax,   vec3(1e30), zero_dir);
 
-    int num_sampling = 0;
+    //int num_sampling = 0;
 
     while (t < t_f && intensity < cut.y) {
         vec3 uv = (cell + 0.5) * coarse_inv;
@@ -244,7 +244,7 @@ void main() {
                 float v = probe_cube(ls + p * f * (hs - ls));
                 intensity = max(intensity, v);
 
-                num_sampling += 1;
+                //num_sampling += 1;
 
                 p += dr;
                 t += step;
