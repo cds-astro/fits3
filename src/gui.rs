@@ -52,9 +52,15 @@ impl EguiRenderer {
     }
 
     pub fn begin_frame(&mut self, window: &Window) {
-        let mut raw_input = self.state.take_egui_input(window);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let raw_input = self.state.take_egui_input(window);
+            self.state.egui_ctx().begin_pass(raw_input);
+        }
+
         #[cfg(target_arch = "wasm32")]
         {
+            let mut raw_input = self.state.take_egui_input(window);
             let scale = 0.75;
 
             for event in &mut raw_input.events {
@@ -66,9 +72,10 @@ impl EguiRenderer {
                     *pos *= scale;
                 }
             }
+
+            self.state.egui_ctx().begin_pass(raw_input);
         }
         
-        self.state.egui_ctx().begin_pass(raw_input);
         self.frame_started = true;
     }
 

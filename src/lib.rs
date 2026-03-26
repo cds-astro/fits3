@@ -9,8 +9,6 @@ extern crate console_error_panic_hook;
 use std::iter;
 use std::convert::TryInto;
 use egui_double_slider::DoubleSlider;
-use fitsrs::ImgXY;
-
 
 use winit::{
     application::ApplicationHandler,
@@ -46,6 +44,7 @@ use memmap2::Mmap;
 use std::fs::File;
 use std::io::Cursor;
 
+#[cfg(not(target_arch = "wasm32"))]
 const CUBES_PATH: &[&'static str] = &[
     "./cubes/cutout-CDS_P_LGLBSHI16.fits",
     "./cubes/NGC_628_RO_CUBE_THINGS.FITS",
@@ -58,7 +57,10 @@ const CUBES_PATH: &[&'static str] = &[
     "./cubes/DHIGLS_MG_Tb.fits",
     "./cubes/DHIGLS_PO_Tb.fits", //"./cubes/cosmo512-be.fits",
 ];
-use fitsrs::WCS;
+
+#[cfg(target_arch = "wasm32")]
+use fitsrs::{ImgXY};
+
 use std::collections::HashMap;
 struct State {
     surface: wgpu::Surface<'static>,
@@ -67,8 +69,6 @@ struct State {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
 
-    #[cfg(target_arch = "wasm32")]
-    send_data: async_channel::Sender<Vec<u8>>,
     #[cfg(target_arch = "wasm32")]
     recv_data: async_channel::Receiver<Vec<u8>>,
     
@@ -366,7 +366,7 @@ impl State {
                             let sd3 = sd.clone();
 
                             wasm_bindgen_futures::spawn_local(async move {
-                                let mut data = array.to_vec();
+                                let data = array.to_vec();
                                 sd3.send(data).await.unwrap();
                             });
 
@@ -394,8 +394,6 @@ impl State {
             queue,
             config,
             size,
-            #[cfg(target_arch = "wasm32")]
-            send_data,
             #[cfg(target_arch = "wasm32")]
             recv_data,
 
@@ -450,21 +448,35 @@ impl State {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
     fn resize(&mut self, mut new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
-            #[cfg(target_arch = "wasm32")]
-            {
-                new_size.width = (new_size.width as f32 * 0.75_f32) as u32;
-                new_size.height = (new_size.height as f32 * 0.75_f32) as u32;
+            new_size.width = (new_size.width as f32 * 0.75_f32) as u32;
+            new_size.height = (new_size.height as f32 * 0.75_f32) as u32;
 
-                new_size.width = new_size
-                    .width
-                    .min(wgpu::Limits::downlevel_webgl2_defaults().max_texture_dimension_2d);
-                new_size.height = new_size
-                    .height
-                    .min(wgpu::Limits::downlevel_webgl2_defaults().max_texture_dimension_2d);
-            }
+            new_size.width = new_size
+                .width
+                .min(wgpu::Limits::downlevel_webgl2_defaults().max_texture_dimension_2d);
+            new_size.height = new_size
+                .height
+                .min(wgpu::Limits::downlevel_webgl2_defaults().max_texture_dimension_2d);
 
+            self.size = new_size;
+            self.config.width = new_size.width;
+            self.config.height = new_size.height;
+            self.surface.configure(&self.device, &self.config);
+            self.is_surface_configured = true;
+        }
+        self.queue.write_buffer(
+            &self.buffers["window_size"],
+            0,
+            bytemuck::bytes_of(&[self.size.width as f32, self.size.height as f32, 0.0, 0.0]),
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
             self.config.width = new_size.width;
             self.config.height = new_size.height;
@@ -549,9 +561,8 @@ impl State {
                 let mut fov_max = self.fov_max;
                 let naxis = &self.naxis;
                 let mut show_moment0_window = self.show_moment0_window;
-                let mut moment0_texture = &mut self.moment0_texture;
+                let moment0_texture = &mut self.moment0_texture;
                 if let Some(cube) = self.cube.as_ref() {
-                    let wcs = &cube.wcs;
                     let queue = &self.queue;
 
                     let mut slice_idx = self.slice_idx;
@@ -642,7 +653,7 @@ impl State {
 
                             ui.checkbox(&mut show_unique_slice, "Slice selector");
                             ui.add_enabled_ui(show_unique_slice, |ui| {
-                                ui.add(egui::Slider::new(&mut slice_idx, 0..=naxis.2).text("slice idx"));
+                                ui.add(egui::Slider::new(&mut slice_idx, (fmin as u32)..=(fmax as u32)).text("slice idx"));
                             });
 
                             ui.separator();
@@ -692,47 +703,39 @@ impl State {
                                         fov_min = 0.0;
                                         fov_max = fov;
 
-                                        let x_px = ra as f64;
-                                        let y_px = dec as f64;
-                                        let w_px = fov as f64;
-
-                                        let f1 = f1 / (naxis.2 as f32);
-                                        let f2 = f2 / (naxis.2 as f32);
-
-                                        let p = cube
-                                            .wcs
-                                            .unproj(&ImgXY::new(x_px, y_px))
-                                            .unwrap();
-                                        let p1 = cube
-                                            .wcs
-                                            .unproj(&ImgXY::new(x_px - w_px * 0.5, y_px))
-                                            .unwrap();
-                                        let p2 = cube
-                                            .wcs
-                                            .unproj(&ImgXY::new(x_px + w_px * 0.5, y_px))
-                                            .unwrap();
-
-                                        let fov = cube
-                                            .wcs.field_of_view().0 * ((w_px as f64) / (naxis.0 as f64));
-
                                         #[cfg(target_arch = "wasm32")]
-                                        ONSELECT.with(|f| {
-                                            if let Some(cb) = &*f.borrow() {
-                                                use js_sys::Array;
-                                                let ra_min = p1.lon().to_degrees();
-                                                let ra_max = p2.lon().to_degrees();
-                                                let ra = p.lon().to_degrees();
-                                                let dec = p.lat().to_degrees();
+                                        {
+                                            let x_px = ra as f64;
+                                            let y_px = dec as f64;
+                                            let w_px = fov as f64;
 
-                                                let args = Array::new();
-                                                args.push(&JsValue::from_f64(ra));
-                                                args.push(&JsValue::from_f64(dec));
-                                                args.push(&JsValue::from_f64(fov));
-                                                args.push(&JsValue::from_f64(f1 as f64));
-                                                args.push(&JsValue::from_f64(f2 as f64));
-                                                cb.apply(&JsValue::NULL, &args).unwrap();
-                                            }
-                                        });
+                                            let p = cube
+                                                .wcs
+                                                .unproj(&ImgXY::new(x_px, y_px))
+                                                .unwrap();
+
+                                            let fov = cube
+                                                .wcs.field_of_view().0 * ((w_px as f64) / (naxis.0 as f64));
+
+                                            let f1 = f1 / (naxis.2 as f32);
+                                            let f2 = f2 / (naxis.2 as f32);
+
+                                            ONSELECT.with(|f| {
+                                                if let Some(cb) = &*f.borrow() {
+                                                    use js_sys::Array;
+                                                    let ra = p.lon().to_degrees();
+                                                    let dec = p.lat().to_degrees();
+
+                                                    let args = Array::new();
+                                                    args.push(&JsValue::from_f64(ra));
+                                                    args.push(&JsValue::from_f64(dec));
+                                                    args.push(&JsValue::from_f64(fov));
+                                                    args.push(&JsValue::from_f64(f1 as f64));
+                                                    args.push(&JsValue::from_f64(f2 as f64));
+                                                    cb.apply(&JsValue::NULL, &args).unwrap();
+                                                }
+                                            });
+                                        }
                                     }
 
                                     if ui.button("Reset").clicked() {
@@ -822,31 +825,33 @@ impl State {
                                 bytemuck::bytes_of(&[min_cut, max_cut, 0.0, 0.0]),
                             );
 
-                            let (sx, sy, sz) = if show_unique_slice {
-                                (
-                                    0.0..(naxis.0 as f32),
-                                    0.0..(naxis.1 as f32),
-                                    (slice_idx as f32)..(slice_idx as f32 + 1.0)
-                                )
-                            } else {
-                                // in normal mode
-                                (
-                                    (ra - fov * 0.5)..(ra + fov * 0.5),
-                                    (dec - fov * 0.5)..(dec + fov * 0.5),
-                                    (f1 as f32)..(f2 as f32)
-                                )
-                            };
+                            let (l, h) = if show_unique_slice {
+                                let l = [
+                                    (ra - fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
+                                    (dec - fov * 0.5 - dec_min) / (dec_max - dec_min) - 0.5,
+                                    (slice_idx as f32 - fmin) / (fmax - fmin) - 0.5,
+                                ];
+                                let h = [
+                                    (ra + fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
+                                    (dec + fov * 0.5 - dec_min) / (dec_max - dec_min) - 0.5,
+                                    (slice_idx as f32 + 1.0 - fmin) / (fmax - fmin) - 0.5,
+                                ];
 
-                            let l = [
-                                (sx.start - ra_min) / (ra_max - ra_min) - 0.5,
-                                (sy.start - dec_min) / (dec_max - dec_min) - 0.5,
-                                (sz.start - fmin) / (fmax - fmin) - 0.5,
-                            ];
-                            let h = [
-                                (sx.end - ra_min) / (ra_max - ra_min) - 0.5,
-                                (sy.end - dec_min) / (dec_max - dec_min) - 0.5,
-                                (sz.end - fmin) / (fmax - fmin) - 0.5,
-                            ];
+                                (l, h)
+                            } else {
+                                let l = [
+                                    (ra - fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
+                                    (dec - fov * 0.5 - dec_min) / (dec_max - dec_min) - 0.5,
+                                    (f1 as f32 - fmin) / (fmax - fmin) - 0.5,
+                                ];
+                                let h = [
+                                    (ra + fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
+                                    (dec + fov * 0.5 - dec_min) / (dec_max - dec_min) - 0.5,
+                                    (f2 as f32 - fmin) / (fmax - fmin) - 0.5,
+                                ];
+
+                                (l, h)
+                            };
 
                             queue.write_buffer(
                                 &buffers["bbox"],
@@ -1021,13 +1026,6 @@ lazy_static! {
 }
 
 #[cfg(target_arch = "wasm32")]
-static mut PARAMS: Params = Params {
-    perspective: None,
-    cuts: None,
-    data: None,
-};
-
-#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(js_name = "setPerspective")]
 pub fn set_perspective(perspective: bool) {
     wasm_bindgen_futures::spawn_local(async move {
@@ -1092,6 +1090,7 @@ pub struct App {
     start_min_cut: f32,
     start_max_cut: f32,
 
+    #[cfg(not(target_arch = "wasm32"))]
     i: usize,
 }
 
@@ -1118,6 +1117,8 @@ impl App {
 
             start_min_cut: 0.0,
             start_max_cut: 1.0,
+
+            #[cfg(not(target_arch = "wasm32"))]
             i: 0,
         }
     }
@@ -1129,7 +1130,15 @@ impl App {
             .create_surface(window.clone())
             .expect("Failed to created the wgpu surface.");
 
+        #[cfg(not(target_arch = "wasm32"))]
         let mut state = State::new(
+            &window,
+            &self.instance,
+            surface,
+        )
+        .await;
+        #[cfg(target_arch = "wasm32")]
+        let state = State::new(
             &window,
             &self.instance,
             surface,
@@ -1156,6 +1165,7 @@ impl ApplicationHandler for App {
         pollster::block_on(self.set_window(window));
     }
 
+    #[allow(unused_variables)]
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         let state = self.state
             .as_mut()
@@ -1522,14 +1532,6 @@ fn create_window(event_loop: &ActiveEventLoop) -> Window {
         win_attrs = win_attrs.with_canvas(Some(canvas));
     }
 
-    // Winit prevents sizing with CSS, so we have to set
-    // the size manually when on web.
-    #[cfg(target_arch = "wasm32")]
-    {
-        use winit::dpi::LogicalSize;
-        //let _ = window.request_inner_size(LogicalSize::new(768, 512));
-    }
-
     event_loop.create_window(win_attrs).unwrap()
 }
 
@@ -1540,6 +1542,8 @@ struct Cube {
     maxcut: f32,
     texture: Texture,
     downsampled_texture: Texture,
+
+    #[cfg(target_arch = "wasm32")]
     wcs: fitsrs::WCS
 }
 
@@ -1699,7 +1703,6 @@ where
                         (bz - (d3 % bz)) % bz
                     );
 
-                    let wcs = hdu.wcs().map_err(|_| "wcs not found")?;
                     let texture = Texture::from_raw_bytes::<f32>(
                         &device,
                         &queue,
@@ -1730,6 +1733,9 @@ where
                         original_dim.2,
                     );
 
+                    #[cfg(target_arch = "wasm32")]
+                    let wcs = hdu.wcs().map_err(|_| "wcs not found")?;
+
                     // Build the downgrade resolued cube for faster raytracing.
                     // This cube will be first sampled to know whether it is interesting
                     // to sample the full resolued one or to skip to the next big voxel (8x8x8)
@@ -1738,6 +1744,7 @@ where
                         dim,
                         mincut: cuts.start,
                         maxcut: cuts.end,
+                        #[cfg(target_arch = "wasm32")]
                         wcs,
                         texture,
                         downsampled_texture
@@ -1752,8 +1759,6 @@ where
         Err("Is not a FITS file")
     }
 }
-
-use std::fmt::Debug;
 
 pub fn first_and_last_percent_f32(
     slice: &mut [f32],
