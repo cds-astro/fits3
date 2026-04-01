@@ -30,7 +30,7 @@ impl EguiRenderer {
             #[cfg(not(target_arch = "wasm32"))]
             Some(window.scale_factor() as f32),
             #[cfg(target_arch = "wasm32")]
-            Some((window.scale_factor() as f32) * 0.75),
+            Some((window.scale_factor() as f32)),
             None,
             Some(2 * 1024), // default dimension is 2048
         );

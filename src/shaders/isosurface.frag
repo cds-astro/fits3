@@ -9,53 +9,46 @@ layout(set = 0, binding = 0) uniform texture3D t_map;
 layout(set = 0, binding = 1) uniform sampler s_map;
 layout(set = 0, binding = 2) uniform texture3D td_map;
 layout(set = 0, binding = 3) uniform sampler sd_map;
+
 layout(set = 0, binding = 4)
-uniform RotationMatrix {
-    mat4 rot;
-};
-layout(set = 0, binding = 6)
-uniform Time {
-    vec4 time;
-};
-layout(set = 0, binding = 7)
-uniform Origin {
+uniform Scene {
+    vec4 win_size;
     vec4 origin;
-};
-layout(set = 0, binding = 8)
-uniform Cut {
-    vec4 cut;
-};
-layout(set = 0, binding = 9)
-uniform Perspective {
     vec4 perspective;
 };
-layout(set = 0, binding = 10)
-uniform Isosurface {
-    vec4 isosurface;
-};
-layout(set = 0, binding = 11)
-uniform DiffuseColor {
-    vec4 diffuse_color;
-};
-layout(set = 0, binding = 12)
-uniform Size {
-    vec4 cube_size;
-};
-layout(set = 0, binding = 13)
-uniform BBox {
-    vec3 l;
-    vec3 h;
-};
-layout(set = 0, binding = 14)
-uniform BlockSize {
-    vec4 block_size;
-};
-layout(set = 0, binding = 15)
-uniform Zoom {
-    vec3 ls;
-    vec3 hs;
+
+layout(set = 0, binding = 5)
+uniform Volume {
+    vec3 cube_size;
+    float _pad1;   // padding!
+    vec3 block_size;
+    float _pad2;   // padding!
 };
 
+layout(set = 0, binding = 6)
+uniform RenderParams {
+    vec3 cut_iso;
+    int colormap;
+    // x,y = cut
+    // z = isosurface
+    // w = colormap_selected (cast to float)
+    vec4 diffuse_color;
+};
+
+layout(set = 0, binding = 7)
+uniform Interaction {
+    vec3 zoom_l;
+    float _pad3; // padding!
+
+    vec3 zoom_h;
+    float _pad4; // padding!
+
+    vec3 bbox_min;
+    float _pad5;   // padding!
+
+    vec3 bbox_max;
+    float _pad6;   // padding!
+};
 
 vec3 lonlat2xyz(float lon, float lat) {
     float lat_s = sin(lat);
@@ -64,84 +57,6 @@ vec3 lonlat2xyz(float lon, float lat) {
     float lon_c = cos(lon);
 
     return vec3(lat_c * lon_s, lat_s, lat_c * lon_c);
-}
-float colormap_red(float x) {
-    if (x < 0.7) {
-        return 4.0 * x - 1.5;
-    } else {
-        return -4.0 * x + 4.5;
-    }
-}
-
-float colormap_green(float x) {
-    if (x < 0.5) {
-        return 4.0 * x - 0.5;
-    } else {
-        return -4.0 * x + 3.5;
-    }
-}
-
-float colormap_blue(float x) {
-    if (x < 0.3) {
-       return 4.0 * x + 0.5;
-    } else {
-       return -4.0 * x + 2.5;
-    }
-}
-/*
-vec3 colormap_viridis(float t) {
-    // Clamp input to [0,1]
-    t = clamp(t, 0.0, 1.0);
-
-    // Coefficients from the original viridis colormap (Matplotlib)
-    const vec3 c0 = vec3(0.280, 0.165, 0.476);
-    const vec3 c1 = vec3(0.110, 0.573, 0.664);
-    const vec3 c2 = vec3(0.478, 0.821, 0.318);
-
-    // Interpolation logic
-    if (t < 0.5) {
-        float f = smoothstep(0.0, 0.5, t);
-        return mix(c0, c1, f);
-    } else {
-        float f = smoothstep(0.5, 1.0, t);
-        return mix(c1, c2, f);
-    }
-}*/
-
-vec3 colormap_viridis(float t) {
-    vec3 c0 = vec3(0.2777273272234177, 0.005407344544966578, 0.3340998053353061);
-    vec3 c1 = vec3(0.1050930431085774, 1.404613529898575, 1.384590162594685);
-    vec3 c2 = vec3(-0.3308618287255563, 0.214847559468213, 0.09509516302823659);
-    vec3 c3 = vec3(-4.634230498983486, -5.799100973351585, -19.33244095627987);
-    vec3 c4 = vec3(6.228269936347081, 14.17993336680509, 56.69055260068105);
-    vec3 c5 = vec3(4.776384997670288, -13.74514537774601, -65.35303263337234);
-    vec3 c6 = vec3(-5.435455855934631, 4.645852612178535, 26.3124352495832);
-    return c0+t*(c1+t*(c2+t*(c3+t*(c4+t*(c5+t*c6)))));
-}
-
-vec3 colormap_turbo(in float x) {
-    const vec4 kRedVec4 = vec4(0.13572138, 4.61539260, -42.66032258, 132.13108234);
-    const vec4 kGreenVec4 = vec4(0.09140261, 2.19418839, 4.84296658, -14.18503333);
-    const vec4 kBlueVec4 = vec4(0.10667330, 12.64194608, -60.58204836, 110.36276771);
-    const vec2 kRedVec2 = vec2(-152.94239396, 59.28637943);
-    const vec2 kGreenVec2 = vec2(4.27729857, 2.82956604);
-    const vec2 kBlueVec2 = vec2(-89.90310912, 27.34824973);
-  
-    x = clamp(x,0.0,1.0);
-    vec4 v4 = vec4( 1.0, x, x * x, x * x * x);
-    vec2 v2 = v4.zw * v4.z;
-    return vec3(
-        dot(v4, kRedVec4)   + dot(v2, kRedVec2),
-        dot(v4, kGreenVec4) + dot(v2, kGreenVec2),
-        dot(v4, kBlueVec4)  + dot(v2, kBlueVec2)
-    );
-}
-
-vec4 colormap(float x) {
-    float r = clamp(colormap_red(x), 0.0, 1.0);
-    float g = clamp(colormap_green(x), 0.0, 1.0);
-    float b = clamp(colormap_blue(x), 0.0, 1.0);
-    return vec4(r, g, b, 1.0);
 }
 
 float to_l_endian(float x) {
@@ -185,7 +100,7 @@ float probe_downsampled_cube(vec3 p) {
 }
 
 vec3 compute_normal(vec3 p) {
-    vec3 dv = 2.0 / cube_size.xyz;
+    vec3 dv = 2.0 / cube_size;
 
     vec3 n = vec3(
         probe_cube(p - vec3(dv.x, 0.0, 0.0)) - probe_cube(p + vec3(dv.x, 0.0, 0.0)),
@@ -197,7 +112,7 @@ vec3 compute_normal(vec3 p) {
 }
 
 vec3 grad4(vec3 p) {
-    vec3 e = 1.0 / cube_size.xyz;
+    vec3 e = 1.0 / cube_size;
 
     vec3 k1 = vec3( 1, -1, -1);
     vec3 k2 = vec3(-1, -1,  1);
@@ -231,8 +146,8 @@ void main() {
     // orthographic perspective
     vec3 r = mix(normalize(p_cam - cam_origin), cam_dir, float(perspective.x == 0.0));
 
-    vec3 t_low = (l - p_cam) / r;
-    vec3 t_high = (h - p_cam) / r;
+    vec3 t_low = (bbox_min - p_cam) / r;
+    vec3 t_high = (bbox_max - p_cam) / r;
 
     vec3 t_close = min(t_low, t_high);
     vec3 t_far = max(t_low, t_high);
@@ -264,7 +179,7 @@ void main() {
     // p in [0; 1]
     vec3 p = p_cam + r * t + vec3(0.5);
 
-    float intensity = cut.x;
+    float intensity = cut_iso.x;
 
     vec3 step_dir = sign(r);
     vec3 cell = floor(p * coarse_size * f);
@@ -284,20 +199,20 @@ void main() {
     float v = -1e30;
     float vv = v;
 
-    while (t < t_f && v < isosurface.x) {
+    while (t < t_f && v < cut_iso.z) {
         vec3 uv = (cell + 0.5) * coarse_inv;
-        float max_v = probe_downsampled_cube(ls + uv * (hs - ls));
+        float max_v = probe_downsampled_cube(zoom_l + uv * (zoom_h - zoom_l));
 
-        if (max_v > isosurface.x) {
+        if (max_v > cut_iso.z) {
             float boundary = min(tMax.x, min(tMax.y, tMax.z));
             float limit = min(boundary, t_f);
  
-            while(v < isosurface.x && t < limit) {
+            while(v < cut_iso.z && t < limit) {
                 vv = v;
-                v = probe_cube(ls + p * f * (hs - ls));
+                v = probe_cube(zoom_l + p * f * (zoom_h - zoom_l));
                 num_sampling += step;
 
-                if (v > isosurface.x)
+                if (v > cut_iso.z)
                     break;
 
                 pp = p;
@@ -305,7 +220,7 @@ void main() {
                 t += step;
             }
 
-            if (v > isosurface.x)
+            if (v > cut_iso.z)
                 break;
         }
 
@@ -324,19 +239,11 @@ void main() {
         num_sampling += t - t_prev;
     }
 
-    //vec3 ps = (pp + (p - pp) * (isosurface.x - vv) / (v - vv));
-
-    //vec3 N = compute_normal(ps);
-    //vec3 L = normalize(vec3(10.0, 10.0, 10.0) - ps);
-
-    //float c = clamp((isosurface.x - cut.x) / (cut.y - cut.x), 0.0, 1.0);
-    vec3 N = grad4(ls + p * f * (hs - ls));
+    vec3 N = grad4(zoom_l + p * f * (zoom_h - zoom_l));
     vec3 light_dir = -vec3(0.577350269, 0.577350269, 0.577350269);
     float diffuse = max(dot(N, light_dir), 0.0);
     vec4 color = vec4(diffuse_color.rgb * 0.05 + diffuse_color.rgb * diffuse, diffuse_color.a);
-    //f_color = vec4(cc.rgb*0.05 + cc.rgb * max(dot(N, l), 0.0), 1.0);
 
-    f_color = mix(vec4(0.0, 0.0, 0.0, 1.0), color, float(v > isosurface.x));
-    //f_color = vec4(vec3(num_sampling / 1000.0), 1.0);
+    f_color = mix(vec4(0.0, 0.0, 0.0, 1.0), color, float(v > cut_iso.z));
 }
  

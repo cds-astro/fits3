@@ -7,6 +7,7 @@
       "wasm-dev": "wasm-pack build --target web",
       "wasm": "wasm-pack build --target web --release",
       "build": "npm run wasm && vite build",
+      "build-dev": "npm run wasm-dev && vite build",
       "dev": "cargo watch -s \"npm run wasm-dev\"",
       "serve": "npm run build && vite",
       "demo": "npm run wasm && vite",
