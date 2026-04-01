@@ -1,4 +1,5 @@
 
+use crate::user_event::UserEvent;
 use wasm_bindgen::prelude::wasm_bindgen;
 use winit::window::Window;
 use crate::uniform::Scene;
@@ -38,6 +39,9 @@ pub fn set_perspective(perspective: bool) {
         .await
         .unwrap();
     });
+
+    // Wake up the winit window event
+    crate::user_event::send_event(UserEvent::DisplayData);
 }
 #[wasm_bindgen(js_name = "normalize")]
 pub fn normalize(min: f32, max: f32) {
@@ -51,6 +55,9 @@ pub fn normalize(min: f32, max: f32) {
         .await
         .unwrap();
     });
+
+    // Wake up the winit window event
+    crate::user_event::send_event(UserEvent::DisplayData);
 }
 
 #[wasm_bindgen(js_name = "onselect")]
@@ -72,6 +79,9 @@ pub fn display(raw_bytes: js_sys::Uint8Array) {
         .await
         .unwrap();
     });
+
+    // Wake up the winit window event
+    crate::user_event::send_event(UserEvent::DisplayData);
 }
 
 pub(crate) fn handle_events(state: &mut State, window: &Window) {
