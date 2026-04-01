@@ -8,56 +8,51 @@ layout(set = 0, binding = 0) uniform texture3D t_map;
 layout(set = 0, binding = 1) uniform sampler s_map;
 layout(set = 0, binding = 2) uniform texture3D td_map;
 layout(set = 0, binding = 3) uniform sampler sd_map;
+
 layout(set = 0, binding = 4)
-uniform RotationMatrix {
-    mat4 rot;
-};
-layout(set = 0, binding = 6)
-uniform Time {
-    vec4 time;
-};
-layout(set = 0, binding = 7)
-uniform Origin {
+uniform Scene {
+    vec4 win_size;
     vec4 origin;
-};
-layout(set = 0, binding = 8)
-uniform Cut {
-    vec4 cut;
-};
-layout(set = 0, binding = 9)
-uniform Perspective {
     vec4 perspective;
 };
-layout(set = 0, binding = 10)
-uniform Isosurface {
-    vec4 isosurface;
+
+layout(set = 0, binding = 5)
+uniform Volume {
+    vec3 cube_size;
+    float _pad1;   // padding!
+    vec3 block_size;
+    float _pad2;   // padding!
 };
-layout(set = 0, binding = 11)
-uniform DiffuseColor {
+
+layout(set = 0, binding = 6)
+uniform RenderParams {
+    vec3 cut_iso;
+    int colormap; 
+    // x,y = cut
+    // z = isosurface
+    // w = colormap_selected (cast to float)
     vec4 diffuse_color;
 };
-layout(set = 0, binding = 12)
-uniform Size {
-    vec4 cube_size;
-};
-layout(set = 0, binding = 13)
-uniform BBox {
-    vec3 l;
-    vec3 h;
-};
-layout(set = 0, binding = 14)
-uniform BlockSize {
-    vec4 block_size;
-};
-layout(set = 0, binding = 15)
-uniform Zoom {
-    vec3 ls;
-    vec3 hs;
+
+layout(set = 0, binding = 7)
+uniform Interaction {
+    vec3 zoom_l;
+    float _pad3; // padding!
+
+    vec3 zoom_h;
+    float _pad4; // padding!
+
+    vec3 bbox_min;
+    float _pad5;   // padding!
+
+    vec3 bbox_max;
+    float _pad6;   // padding!
 };
 layout(set = 0, binding = 16)
 uniform Colormap_selected {
     ivec4 colormap_selected;
 };
+
 
 vec3 lonlat2xyz(float lon, float lat) {
     float lat_s = sin(lat);
@@ -196,7 +191,11 @@ vec3 colormap_turbo(in float x) {
 }*/
 
 vec4 colormap(float x) {
+<<<<<<< Updated upstream
     switch(colormap_selected.x) {
+=======
+    switch(colormap) {
+>>>>>>> Stashed changes
         case 1:
             return vec4(colormap_viridis2(x),1.0);
         case 2:
@@ -276,8 +275,8 @@ void main() {
     // orthographic perspective
     vec3 r = mix(normalize(p_cam - cam_origin), cam_dir, float(perspective.x == 0.0));
 
-    vec3 t_low = (l.xyz - p_cam) / r;
-    vec3 t_high = (h.xyz - p_cam) / r;
+    vec3 t_low = (bbox_min - p_cam) / r;
+    vec3 t_high = (bbox_max - p_cam) / r;
 
     vec3 t_close = min(t_low, t_high);
     vec3 t_far = max(t_low, t_high);
@@ -309,7 +308,7 @@ void main() {
     // p in [0; 1]
     vec3 p = p_cam + r * t + vec3(0.5);
 
-    float intensity = cut.x;
+    float intensity = cut_iso.x;
 
     vec3 step_dir = sign(r);
     vec3 cell = floor(p * coarse_size * f);
@@ -324,16 +323,16 @@ void main() {
 
     //int num_sampling = 0;
 
-    while (t < t_f && intensity < cut.y) {
+    while (t < t_f && intensity < cut_iso.y) {
         vec3 uv = (cell + 0.5) * coarse_inv;
-        float max_v = probe_downsampled_cube(ls + uv * (hs - ls));
+        float max_v = probe_downsampled_cube(zoom_l + uv * (zoom_h - zoom_l));
 
         if (max_v > intensity) {
             float boundary = min(tMax.x, min(tMax.y, tMax.z));
             float limit = min(boundary, t_f);
 
-            while(t < limit && intensity < cut.y) {
-                float v = probe_cube(ls + p * f * (hs - ls));
+            while(t < limit && intensity < cut_iso.y) {
+                float v = probe_cube(zoom_l + p * f * (zoom_h - zoom_l));
                 intensity = max(intensity, v);
 
                 //num_sampling += 1;
@@ -356,7 +355,7 @@ void main() {
         p += r * (t - t_prev);
     }
 
-    intensity = clamp((intensity - cut.x) / (cut.y - cut.x), 0.0, 1.0);
+    intensity = clamp((intensity - cut_iso.x) / (cut_iso.y - cut_iso.x), 0.0, 1.0);
     //f_color = vec4(vec3(num_sampling) / 1000.0, 1.0);
     //f_color = vec4(vec3(1.0, 1.0, 0.0), 1.0);
     f_color = colormap(intensity);

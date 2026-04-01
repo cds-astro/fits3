@@ -3,6 +3,10 @@ use wgpu::TextureView;
 use crate::Vertex;
 use crate::Vec4;
 
+use crate::uniform::*;
+
+use crate::ViewPort;
+
 pub const CUBE_VERTICES: &[Vertex] = &[
     // bottom face
     Vertex { xyz: [-0.5, -0.5, -0.5] }, // 0
@@ -51,7 +55,7 @@ impl SelectorRenderer {
         let texture_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
-                // window size uniform
+                // scene uniform
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX,
@@ -59,59 +63,7 @@ impl SelectorRenderer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // cam origin uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // perspective uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // cube size uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // cube position uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
+                            std::mem::size_of::<Scene>() as wgpu::BufferAddress,
                         ),
                     },
                     count: None,
@@ -126,41 +78,11 @@ impl SelectorRenderer {
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["window_size"],
+                        buffer: &buffers["scene"],
                         offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["cam_origin"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["perspective"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["cube_size"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["cube_position"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
+                        size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Scene>() as wgpu::BufferAddress
+                        ),
                     }),
                 },
             ],
@@ -264,7 +186,7 @@ impl SelectorRenderer {
         }
     }
 
-    pub(crate) fn render_frame(&self, encoder: &mut wgpu::CommandEncoder, window_surface_view: &TextureView) {
+    pub(crate) fn render_frame(&self, encoder: &mut wgpu::CommandEncoder, window_surface_view: &TextureView, viewport: &ViewPort) {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             
@@ -282,6 +204,15 @@ impl SelectorRenderer {
             timestamp_writes: None,
             //multiview_mask: None,
         });
+
+        render_pass.set_viewport(
+            viewport.x,
+            viewport.y,
+            viewport.width,
+            viewport.height,
+            0.0,
+            1.0,
+        );
 
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);

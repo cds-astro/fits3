@@ -6,6 +6,9 @@ use crate::VertexNDC;
 use crate::Vec4;
 
 use crate::Cube;
+use crate::ViewPort;
+
+use crate::uniform::*;
 
 pub(crate) struct VolumetricRenderer {
     volumetric_rendering_pipeline: wgpu::RenderPipeline,
@@ -57,33 +60,33 @@ impl VolumetricRenderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
-                // rot matrix uniform
+                // scene uniform
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Scene>() as _,
+                        ),
+                    },
+                    count: None,
+                },
+                // volume uniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Mat4<f32>>() as _,
+                            std::mem::size_of::<Volume>() as wgpu::BufferAddress,
                         ),
                     },
                     count: None,
                 },
-                // window size uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // time uniform
+                // render params uniform
                 wgpu::BindGroupLayoutEntry {
                     binding: 6,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -91,12 +94,12 @@ impl VolumetricRenderer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
+                            std::mem::size_of::<RenderParams>() as wgpu::BufferAddress,
                         ),
                     },
                     count: None,
                 },
-                // cam origin uniform
+                // Interactive
                 wgpu::BindGroupLayoutEntry {
                     binding: 7,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -104,111 +107,7 @@ impl VolumetricRenderer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // cuts uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // perspective uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // isosurface uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // diffuse color uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // size of the cube
-                wgpu::BindGroupLayoutEntry {
-                    binding: 12,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // bbox
-                wgpu::BindGroupLayoutEntry {
-                    binding: 13,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            (std::mem::size_of::<f32>() * 8) as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // block size
-                wgpu::BindGroupLayoutEntry {
-                    binding: 14,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Vec4<f32>>() as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
-                // zoom scaling factors
-                wgpu::BindGroupLayoutEntry {
-                    binding: 15,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            (std::mem::size_of::<f32>() * 8) as wgpu::BufferAddress,
+                            std::mem::size_of::<Interaction>() as wgpu::BufferAddress,
                         ),
                     },
                     count: None,
@@ -254,99 +153,41 @@ impl VolumetricRenderer {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["rotmat"],
+                        buffer: &buffers["scene"],
                         offset: 0,
                         size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Mat4<f32>>() as wgpu::BufferAddress
+                            std::mem::size_of::<Scene>() as wgpu::BufferAddress
                         ),
                     }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["window_size"],
+                        buffer: &buffers["volume"],
                         offset: 0,
-                        size: wgpu::BufferSize::new(16),
+                        size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Volume>() as wgpu::BufferAddress
+                        ),
                     }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["time"],
+                        buffer: &buffers["render_params"],
                         offset: 0,
-                        size: wgpu::BufferSize::new(16),
+                        size: wgpu::BufferSize::new(
+                            std::mem::size_of::<RenderParams>() as wgpu::BufferAddress
+                        ),
                     }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["cam_origin"],
+                        buffer: &buffers["interaction"],
                         offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["cuts"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 9,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["perspective"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 10,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["isosurface"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["diffuse_color"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 12,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["size"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 13,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["bbox"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(32),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 14,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["block_size"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 15,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["zoom"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(32),
+                        size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Interaction>() as wgpu::BufferAddress
+                        )
                     }),
                 },
                 wgpu::BindGroupEntry {
@@ -546,99 +387,41 @@ impl VolumetricRenderer {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["rotmat"],
+                        buffer: &buffers["scene"],
                         offset: 0,
                         size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Mat4<f32>>() as wgpu::BufferAddress
+                            std::mem::size_of::<Scene>() as wgpu::BufferAddress
                         ),
                     }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["window_size"],
+                        buffer: &buffers["volume"],
                         offset: 0,
-                        size: wgpu::BufferSize::new(16),
+                        size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Volume>() as wgpu::BufferAddress
+                        )
                     }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["time"],
+                        buffer: &buffers["render_params"],
                         offset: 0,
-                        size: wgpu::BufferSize::new(16),
+                        size: wgpu::BufferSize::new(
+                            std::mem::size_of::<RenderParams>() as wgpu::BufferAddress
+                        )
                     }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["cam_origin"],
+                        buffer: &buffers["interaction"],
                         offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["cuts"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 9,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["perspective"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 10,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["isosurface"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["diffuse_color"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 12,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["size"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 13,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["bbox"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(32),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 14,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["block_size"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 15,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["zoom"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(32),
+                        size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Interaction>() as wgpu::BufferAddress
+                        )
                     }),
                 },
                 wgpu::BindGroupEntry {
@@ -654,7 +437,7 @@ impl VolumetricRenderer {
         });
     }
 
-    pub(crate) fn render_frame(&self, encoder: &mut wgpu::CommandEncoder, window_surface_view: &TextureView, show_isosurface: bool) {
+    pub(crate) fn render_frame(&self, encoder: &mut wgpu::CommandEncoder, window_surface_view: &TextureView, show_isosurface: bool, viewport: &ViewPort) {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -676,6 +459,15 @@ impl VolumetricRenderer {
             timestamp_writes: None,
             //multiview_mask: None,
         });
+
+        render_pass.set_viewport(
+            viewport.x,
+            viewport.y,
+            viewport.width,
+            viewport.height,
+            0.0,
+            1.0,
+        );
 
         if show_isosurface {
             render_pass.set_pipeline(&self.isosurface_rendering_pipeline);
