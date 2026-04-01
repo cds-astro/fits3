@@ -112,18 +112,6 @@ impl VolumetricRenderer {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 16,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            (std::mem::size_of::<i32>() * 4) as wgpu::BufferAddress,
-                        ),
-                    },
-                    count: None,
-                },
             ],
             label: Some("texture_bind_group_layout"),
         });
@@ -190,14 +178,6 @@ impl VolumetricRenderer {
                         )
                     }),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 16,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["colormap_selected"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                }
             ],
             label: Some("diffuse_bind_group"),
         });
@@ -424,14 +404,6 @@ impl VolumetricRenderer {
                         )
                     }),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 16,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffers["colormap_selected"],
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                }
             ],
             label: Some("diffuse_bind_group"),
         });

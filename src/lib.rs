@@ -14,16 +14,10 @@ use std::path::PathBuf;
 #[cfg(not(target_arch = "wasm32"))]
 use egui_file_dialog::FileDialog;
 
-<<<<<<< Updated upstream
-#[derive(PartialEq)]
-#[derive(Debug)]
-enum Enum {
-=======
 #[repr(i32)]
 #[derive(PartialEq, Copy, Clone)]
 #[derive(Debug)]
 enum Colormap {
->>>>>>> Stashed changes
     Turbo,
     Viridis,
     Inferno,
@@ -32,12 +26,20 @@ enum Colormap {
     Cubehelix,
 }
 
-<<<<<<< Updated upstream
-=======
+#[repr(i32)]
+#[derive(PartialEq, Copy, Clone)]
+#[derive(Debug)]
+enum TransferFunc {
+    Linear,
+    Sqrt,
+    Pow2,
+    Asinh,
+    Log,
+}
+
 use std::f32::consts::PI;
 use uniform::{Scene, Volume, RenderParams, Interaction};
 
->>>>>>> Stashed changes
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalPosition,
@@ -153,13 +155,9 @@ struct State {
 
     #[cfg(not(target_arch = "wasm32"))]
     file_dialog: FileDialog,
-<<<<<<< Updated upstream
-    picked_file: Option<PathBuf>,
-    colormap_selected: Enum,
-=======
     picked_file: Rc<RefCell<Option<String>>>,
     colormap: Colormap,
->>>>>>> Stashed changes
+    transfer: TransferFunc,
 
     // isosurface value
     isosurface: f32,
@@ -290,75 +288,6 @@ impl State {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })),
-<<<<<<< Updated upstream
-            ("diffuse_color", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Diffuse color"),
-                size: 16,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
-            ("perspective", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("perspective"),
-                size: 16,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
-            ("cam_origin", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Cam origin"),
-                size: 16,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
-            ("cuts", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Cuts"),
-                size: 16,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
-            ("bbox", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Bbox of drawing"),
-                size: 32,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
-            ("zoom", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Bbox of drawing"),
-                size: 32,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
-            ("window_size", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("window size uniform"),
-                size: 16,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
-            ("cube_size", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("cube size uniform"),
-                size: 16,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
-            ("cube_position", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("cube position uniform"),
-                size: 16,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
-            ("block_size", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("block size uniform"),
-                size: 16,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
-            ("colormap_selected", device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Colormap Selected"),
-                size: 16,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })),
-=======
->>>>>>> Stashed changes
         ].into_iter().collect();
 
         // Uniform buffer
@@ -379,6 +308,8 @@ impl State {
                 cut_iso: [1.0 as f32, 0.0, 0.0],
                 colormap: 0,
                 diffuse_color: [0.0 as f32, 1.0, 0.0, 1.0],
+                transfer: 0,
+                _pad1: [0.0; 3],
             })
         );
 
@@ -471,15 +402,10 @@ impl State {
             file_dialog: FileDialog::new()
                 .add_file_filter_extensions("FITS cube", vec!["fits"])
                 .default_file_filter("FITS cube"),
-<<<<<<< Updated upstream
-            picked_file: None,
-
-            colormap_selected: Enum::Turbo,
-=======
             picked_file: Rc::new(RefCell::new(None)),
 
             colormap: Colormap::Turbo,
->>>>>>> Stashed changes
+            transfer: TransferFunc::Linear,
 
             clock,
             egui_renderer,
@@ -646,11 +572,8 @@ impl State {
                     }
                 }
                 
-<<<<<<< Updated upstream
-                let colormap_selected = &mut self.colormap_selected;
-=======
                 let mut colormap = self.colormap;
->>>>>>> Stashed changes
+                let mut transfer = self.transfer;
 
                 let cube = self.cube.as_ref();
                 let queue = &self.queue;
@@ -660,22 +583,13 @@ impl State {
                 let data_length = (self.max_cut_default - self.min_cut_default).abs();
                 let datamin = self.min_cut_default - data_length;
                 let datamax = self.max_cut_default + 5.0*data_length;
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes
                 
                 let buffers = &self.buffers;
                 let moment0_texture = &mut self.moment0_texture;
                 let naxis = &self.naxis;
-<<<<<<< Updated upstream
-                let ctx = self.egui_renderer.context();
-
-=======
                 let mut old_bbox_settings = [ra, dec, fov, f1, f2, ra_min, ra_max, dec_min, dec_max, fov_min, fov_max, fmin, fmax, slice_idx as f32];
-                let mut old_render_params = (show_isosurface, min_cut, max_cut, isosurface, colormap, diffuse_color);
+                let mut old_render_params = (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color);
                 let mut old_scene_settings = (theta, delta, perspective);
->>>>>>> Stashed changes
                 if show_options {
                     egui::SidePanel::left("fits3 options")
                     .resizable(true)
@@ -699,17 +613,34 @@ impl State {
                                 min_cut = min_cut_default;
                                 max_cut = max_cut_default;
                             }
+
+                            egui::ComboBox::from_label("Select colormap")
+                                .selected_text(format!("{:?}",colormap))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut colormap, Colormap::Turbo, "Turbo");
+                                    ui.selectable_value(&mut colormap, Colormap::Viridis, "Viridis");
+                                    ui.selectable_value(&mut colormap, Colormap::Inferno, "Inferno");
+                                    ui.selectable_value(&mut colormap, Colormap::Plasma, "Plasma");
+                                    ui.selectable_value(&mut colormap, Colormap::Rainbow, "Rainbow");
+                                    ui.selectable_value(&mut colormap, Colormap::Cubehelix, "Cubehelix");
+                                });
+
+                            egui::ComboBox::from_label("Select a transfer function")
+                                .selected_text(format!("{:?}",transfer))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut transfer, TransferFunc::Linear, "Linear");
+                                    ui.selectable_value(&mut transfer, TransferFunc::Sqrt, "Sqrt");
+                                    ui.selectable_value(&mut transfer, TransferFunc::Pow2, "Pow2");
+                                    ui.selectable_value(&mut transfer, TransferFunc::Asinh, "Asinh");
+                                    ui.selectable_value(&mut transfer, TransferFunc::Log, "Log");
+                                });
                         });
                         
                         ui.separator();
 
                         // Isosurface scope
                         ui.checkbox(&mut show_isosurface, "Show isosurface");
-<<<<<<< Updated upstream
-=======
 
-
->>>>>>> Stashed changes
                         ui.add_enabled_ui(show_isosurface, |ui| {
                             ui.add(egui::Slider::new(&mut isosurface, min_cut_default..=max_cut_default).text("Iso-value"));
                             ui.label("Diffuse color");
@@ -723,29 +654,6 @@ impl State {
                         ui.checkbox(&mut perspective, "Perspective");
 
                         if ui.button("RA Dec (Front)").clicked() {
-<<<<<<< Updated upstream
-                            new_view = Some((std::f32::consts::PI, 0.0));
-                        }
-
-                        if ui.button("-RA Dec (Back)").clicked() {
-                            new_view = Some((0.0, 0.0));
-                        }
-
-                        if ui.button("-V Dec (Left)").clicked() {
-                            new_view = Some((-std::f32::consts::PI/2.0, 0.0));
-                        }
-
-                        if ui.button("V Dec (Right)").clicked() {
-                            new_view = Some((std::f32::consts::PI/2.0, 0.0));
-                        }
-
-                        if ui.button("RA V (Top)").clicked() {
-                            new_view = Some((std::f32::consts::PI, std::f32::consts::PI * 0.5 - 1e-3));
-                        }
-
-                        if ui.button("RA -V (Bottom)").clicked() {
-                            new_view = Some((std::f32::consts::PI, -std::f32::consts::PI * 0.5 + 1e-3));
-=======
                             (theta, delta) = (std::f32::consts::PI, 0.0);
                         }
 
@@ -767,32 +675,7 @@ impl State {
 
                         if ui.button("RA -V (Bottom)").clicked() {
                             (theta, delta) = (std::f32::consts::PI, -std::f32::consts::PI * 0.5 + 1e-3);
->>>>>>> Stashed changes
                         }
-
-                        ui.separator();
-
-                        egui::ComboBox::from_label("Select colormap")
-<<<<<<< Updated upstream
-                            .selected_text(format!("{:?}",colormap_selected))
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(colormap_selected, Enum::Turbo, "Turbo");
-                                ui.selectable_value(colormap_selected, Enum::Viridis, "Viridis");
-                                ui.selectable_value(colormap_selected, Enum::Inferno, "Inferno");
-                                ui.selectable_value(colormap_selected, Enum::Plasma, "Plasma");
-                                ui.selectable_value(colormap_selected, Enum::Rainbow, "Rainbow");
-                                ui.selectable_value(colormap_selected, Enum::Cubehelix, "Cubehelix");
-=======
-                            .selected_text(format!("{:?}",colormap))
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut colormap, Colormap::Turbo, "Turbo");
-                                ui.selectable_value(&mut colormap, Colormap::Viridis, "Viridis");
-                                ui.selectable_value(&mut colormap, Colormap::Inferno, "Inferno");
-                                ui.selectable_value(&mut colormap, Colormap::Plasma, "Plasma");
-                                ui.selectable_value(&mut colormap, Colormap::Rainbow, "Rainbow");
-                                ui.selectable_value(&mut colormap, Colormap::Cubehelix, "Cubehelix");
->>>>>>> Stashed changes
-                            });
 
                         ui.separator();
 
@@ -834,18 +717,9 @@ impl State {
                                         ];
 
                                         queue.write_buffer(
-<<<<<<< Updated upstream
-                                            &buffers["zoom"],
-                                            0,
-                                            bytemuck::bytes_of(&[
-                                                l[0], l[1], l[2], 0.0,
-                                                h[0], h[1], h[2], 0.0
-                                            ]),
-=======
                                             &buffers["interaction"],
                                             0,
                                             bytemuck::bytes_of(&[l[0], l[1], l[2], 0.0, h[0], h[1], h[2], 0.0]),
->>>>>>> Stashed changes
                                         );
 
                                         // set the new select limits
@@ -912,20 +786,12 @@ impl State {
                                         fov_max = naxis.0 as f32;
 
                                         queue.write_buffer(
-<<<<<<< Updated upstream
-                                            &buffers["zoom"],
-                                            0,
-                                            bytemuck::bytes_of(&[
-                                                0.0_f32, 0.0, 0.0, 0.0,
-                                                1.0, 1.0, 1.0, 0.0
-=======
                                             &buffers["interaction"],
                                             0,
                                             bytemuck::bytes_of(&[0.0_f32, 0.0, 0.0,
                                                 0.0,
                                                 1.0, 1.0, 1.0,
                                                 0.0
->>>>>>> Stashed changes
                                             ]),
                                         );
                                     }
@@ -963,11 +829,7 @@ impl State {
                                 });
                             }
                         });
-<<<<<<< Updated upstream
-
-=======
                         
->>>>>>> Stashed changes
                         if show_moment0_window {
                             egui::Window::new("Moment 0")
                                 .open(&mut show_moment0_window)
@@ -979,49 +841,9 @@ impl State {
                                     }
                                 });
                         }
-<<<<<<< Updated upstream
-
-                        queue.write_buffer(
-                            &buffers["isosurface"],
-                            0,
-                            bytemuck::bytes_of(&[isosurface, 0.0, 0.0, 0.0]),
-                        );
-                        queue.write_buffer(
-                            &buffers["perspective"],
-                            0,
-                            bytemuck::bytes_of(&[if perspective { 1.0_f32 } else { 0.0_f32 }, 0.0, 0.0, 0.0]),
-                        );
-                        queue.write_buffer(
-                            &buffers["diffuse_color"],
-                            0,
-                            bytemuck::bytes_of(&diffuse_color),
-                        );
-                        queue.write_buffer(
-                            &buffers["cuts"],
-                            0,
-                            bytemuck::bytes_of(&[min_cut, max_cut, 0.0, 0.0]),
-                        );
-
-                        let colormap_value = match colormap_selected {
-                            Enum::Turbo => 0_i32,
-                            Enum::Viridis => 1,
-                            Enum::Inferno => 2,
-                            Enum::Plasma => 3,
-                            Enum::Rainbow => 4,
-                            Enum::Cubehelix => 5,
-                        };
-
-                        queue.write_buffer(
-                            &buffers["colormap_selected"],
-                            0,
-                            bytemuck::bytes_of(&[colormap_value, 0, 0, 0]),
-                        );
-
-=======
                     });
 
                     if old_bbox_settings != [ra, dec, fov, f1, f2, ra_min, ra_max, dec_min, dec_max, fov_min, fov_max, fmin, fmax, slice_idx as f32] || show_unique_slice != self.show_unique_slice {
->>>>>>> Stashed changes
                         let (l, h) = if show_unique_slice {
                             let l = [
                                 (ra - fov * 0.5 - ra_min) / (ra_max - ra_min) - 0.5,
@@ -1051,36 +873,13 @@ impl State {
                         };
 
                         queue.write_buffer(
-<<<<<<< Updated upstream
-                            &buffers["bbox"],
-                            0,
-=======
                             &buffers["interaction"],
                             offset_of!(Interaction, bbox_min) as wgpu::BufferAddress,
->>>>>>> Stashed changes
                             bytemuck::bytes_of(&[
                                 l[0], l[1], l[2], 0.0,
                                 h[0], h[1], h[2], 0.0
                             ]),
                         );
-<<<<<<< Updated upstream
-                    });
-
-
-                    if let Some((theta, delta)) = new_view {
-                        self.theta = theta as f64;
-                        self.delta = delta as f64;
-                        self.dtheta = 0.0;
-                        self.ddelta = 0.0;
-                        
-                        self.queue.write_buffer(
-                            &self.buffers["cam_origin"],
-                            0,
-                            bytemuck::bytes_of(&[theta, delta, 0.0, 0.0]),
-                        );
-                    }
-
-=======
 
                         needs_redraw = true;
                     }
@@ -1098,14 +897,16 @@ impl State {
                         needs_redraw = true;
                     }
 
-                    if old_render_params != (show_isosurface, min_cut, max_cut, isosurface, colormap, diffuse_color) {
+                    if old_render_params != (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color) {
                         queue.write_buffer(
                             &buffers["render_params"],
                             0,
                             bytemuck::bytes_of(&RenderParams {
                                 cut_iso: [min_cut, max_cut, isosurface],
                                 colormap: colormap as i32,
-                                diffuse_color
+                                diffuse_color,
+                                transfer: transfer as i32,
+                                _pad1: [0.0; 3],
                             }),
                         );
 
@@ -1117,16 +918,13 @@ impl State {
                     self.dtheta = 0.0;
                     self.ddelta = 0.0;
 
->>>>>>> Stashed changes
                     self.isosurface = isosurface;
                     self.perspective = perspective;
                     self.diffuse_color = diffuse_color;
                     self.show_isosurface = show_isosurface;
                     self.show_unique_slice = show_unique_slice;
-<<<<<<< Updated upstream
-=======
                     self.colormap = colormap;
->>>>>>> Stashed changes
+                    self.transfer = transfer;
                     self.min_cut = min_cut;
                     self.max_cut = max_cut;
 
@@ -1149,10 +947,7 @@ impl State {
                     self.show_moment0_window = show_moment0_window;
                 }
 
-<<<<<<< Updated upstream
-=======
                 self.needs_redraw = needs_redraw;
->>>>>>> Stashed changes
                 self.show_options = show_options;
 
                 if self.needs_redraw || ctx.has_requested_repaint() {
@@ -1179,14 +974,21 @@ impl State {
 
                 let vx = (rect.min.x * ctx.pixels_per_point()).max(0.0);
                 let vy = (rect.min.y * ctx.pixels_per_point()).max(0.0);
+                #[cfg(target_arch = "wasm32")]
                 let vw = (rect.width() * pixels_per_point)
                     .max(0.0)
                     .min(wgpu::Limits::downlevel_webgl2_defaults().max_texture_dimension_2d as f32);
+                #[cfg(not(target_arch = "wasm32"))]
+                let vw = (rect.width() * pixels_per_point)
+                    .max(0.0);
+
+                #[cfg(target_arch = "wasm32")]
                 let vh = (rect.height() * pixels_per_point)
                     .max(0.0)
                     .min(wgpu::Limits::downlevel_webgl2_defaults().max_texture_dimension_2d as f32);
-
-                //web_sys::console::log_1(&format!("{:?}", vw).into());
+                #[cfg(not(target_arch = "wasm32"))]
+                let vh = (rect.height() * pixels_per_point)
+                    .max(0.0);
 
                 let new_viewport = ViewPort { x: vx, y: vy, width: vw, height: vh };
                 if self.viewport != new_viewport {
