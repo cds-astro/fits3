@@ -468,7 +468,20 @@ impl State {
         }
     }
 
-    fn update(&mut self, window: &Window) {}
+    fn set_camera_position(&mut self, theta: f64, dtheta: f64, delta: f64, ddelta: f64, window: &Window) {
+        self.theta = theta;
+        self.dtheta = dtheta;
+        self.delta = delta;
+        self.ddelta = ddelta;
+
+        self.queue.write_buffer(
+            &self.buffers["scene"],
+            offset_of!(Scene, origin) as wgpu::BufferAddress,
+            bytemuck::bytes_of(&[self.theta as f32 + self.dtheta as f32, self.delta as f32 + self.ddelta as f32]),
+        );
+        
+        window.request_redraw();
+    }
 
     fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
         let size = window.inner_size();
@@ -1169,14 +1182,6 @@ impl App {
             .create_surface(window.clone())
             .expect("Failed to created the wgpu surface.");
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let mut state = State::new(
-            &window,
-            &self.instance,
-            surface,
-        )
-        .await;
-        #[cfg(target_arch = "wasm32")]
         let state = State::new(
             &window,
             &self.instance,
@@ -1291,18 +1296,8 @@ impl ApplicationHandler<UserEvent> for App {
                     },
                 ..
             } => {
-                state.theta = std::f64::consts::PI;
-                state.dtheta = 0.0;
-                state.delta = 0.0;
-                state.ddelta = 0.0;
-                state.queue.write_buffer(
-                    &state.buffers["scene"],
-                    offset_of!(Scene, origin) as wgpu::BufferAddress,
-                    bytemuck::bytes_of(&[state.theta as f32 + state.dtheta as f32, 0.0]),
-                );
-                window.request_redraw();
+                state.set_camera_position(std::f64::consts::PI,0.0,0.0,0.0, window);
             }
-
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -1312,13 +1307,8 @@ impl ApplicationHandler<UserEvent> for App {
                     },
                 ..
             } => {
-                state.theta += std::f64::consts::PI/4.0;
-                state.queue.write_buffer(
-                    &state.buffers["scene"],
-                    offset_of!(Scene, origin) as wgpu::BufferAddress,
-                    bytemuck::bytes_of(&[state.theta as f32 + state.dtheta as f32, state.delta as f32 + state.ddelta as f32]),
-                );
-                window.request_redraw();
+                state.theta -= std::f64::consts::PI/4.0;
+                state.set_camera_position(state.theta, 0.0, state.delta, 0.0, window);
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -1329,13 +1319,8 @@ impl ApplicationHandler<UserEvent> for App {
                     },
                 ..
             } => {
-                state.theta -= std::f64::consts::PI/4.0;
-                state.queue.write_buffer(
-                    &state.buffers["scene"],
-                    offset_of!(Scene, origin) as wgpu::BufferAddress,
-                    bytemuck::bytes_of(&[state.theta as f32 + state.dtheta as f32, state.delta as f32 + state.ddelta as f32]),
-                );
-                window.request_redraw();
+                state.theta += std::f64::consts::PI/4.0;
+                state.set_camera_position(state.theta, 0.0, state.delta, 0.0, window);
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -1350,12 +1335,7 @@ impl ApplicationHandler<UserEvent> for App {
                     -std::f64::consts::PI * 0.5 + 1e-3,
                     std::f64::consts::PI * 0.5 - 1e-3,
                 );
-                state.queue.write_buffer(
-                    &state.buffers["scene"],
-                    offset_of!(Scene, origin) as wgpu::BufferAddress,
-                    bytemuck::bytes_of(&[state.theta as f32 + state.dtheta as f32, state.delta as f32 + state.ddelta as f32]),
-                );
-                window.request_redraw();
+                state.set_camera_position(state.theta, state.dtheta, state.delta, state.ddelta, window);
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -1370,19 +1350,80 @@ impl ApplicationHandler<UserEvent> for App {
                     -std::f64::consts::PI * 0.5 + 1e-3,
                     std::f64::consts::PI * 0.5 - 1e-3,
                 );
-                state.queue.write_buffer(
-                    &state.buffers["scene"],
-                    offset_of!(Scene, origin) as wgpu::BufferAddress,
-                    bytemuck::bytes_of(&[state.theta as f32 + state.dtheta as f32, state.delta as f32 + state.ddelta as f32]),
-                );
-                window.request_redraw();
+                state.set_camera_position(state.theta, state.dtheta, state.delta, state.ddelta, window);
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::KeyF) | PhysicalKey::Code(KeyCode::Numpad2),
+                        ..
+                    },
+                ..
+            } => {
+                state.set_camera_position(std::f64::consts::PI,0.0,0.0,0.0, window);
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::KeyB) | PhysicalKey::Code(KeyCode::Numpad8),
+                        ..
+                    },
+                ..
+            } => {
+                state.set_camera_position(0.0,0.0,0.0,0.0, window);
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::KeyL) | PhysicalKey::Code(KeyCode::Numpad4),
+                        ..
+                    },
+                ..
+            } => {
+                state.set_camera_position(-std::f64::consts::PI * 0.5,0.0,0.0,0.0, window);
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::KeyR) | PhysicalKey::Code(KeyCode::Numpad6),
+                        ..
+                    },
+                ..
+            } => {
+                state.set_camera_position(std::f64::consts::PI * 0.5,0.0,0.0,0.0, window);
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::KeyT) | PhysicalKey::Code(KeyCode::Numpad0),
+                        ..
+                    },
+                ..
+            } => {
+                state.set_camera_position(std::f64::consts::PI, 0.0, std::f64::consts::PI * 0.5 - 1e-3,0.0, window);
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::Numpad5),
+                        ..
+                    },
+                ..
+            } => {
+                state.set_camera_position(std::f64::consts::PI,0.0,-std::f64::consts::PI * 0.5 + 1e-3,0.0, window);
             }
             WindowEvent::KeyboardInput {
                 event,
                 ..
             } => {
                 // Ctrl+O
-                self.shortcuts.process_key_event(KeyCode::KeyO, &event, true, || {
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::KeyO), &event, true, || {
                     state.show_options = !state.show_options;
 
                     window.request_redraw();
@@ -1390,8 +1431,6 @@ impl ApplicationHandler<UserEvent> for App {
             },
             WindowEvent::Resized(physical_size) => state.resize(physical_size),
             WindowEvent::RedrawRequested => {
-                state.update(window);
-
                 let window = self.window.as_ref().unwrap();
                 let _ = state.render(window);
 
