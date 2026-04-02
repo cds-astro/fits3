@@ -33,6 +33,7 @@ uniform RenderParams {
     // w = colormap_selected (cast to float)
     vec4 diffuse_color;
     int transfer;
+    int reversed;
 };
 
 layout(set = 0, binding = 7)
@@ -354,6 +355,9 @@ void main() {
     }
 
     intensity = clamp((intensity - cut_iso.x) / (cut_iso.y - cut_iso.x), 0.0, 1.0);
+    if(reversed == 1) {
+        intensity = 1 - intensity;
+    }
     f_color = colormap(transfer(intensity));
 }
  

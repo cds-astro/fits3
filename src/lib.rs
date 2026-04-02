@@ -158,6 +158,7 @@ struct State {
     picked_file: Rc<RefCell<Option<String>>>,
     colormap: Colormap,
     transfer: TransferFunc,
+    reversed: bool,
 
     // isosurface value
     isosurface: f32,
@@ -309,7 +310,8 @@ impl State {
                 colormap: 0,
                 diffuse_color: [0.0 as f32, 1.0, 0.0, 1.0],
                 transfer: 0,
-                _pad1: [0.0; 3],
+                reversed: 0,
+                _pad1: [0.0; 2],
             })
         );
 
@@ -406,6 +408,7 @@ impl State {
 
             colormap: Colormap::Turbo,
             transfer: TransferFunc::Linear,
+            reversed: false,
 
             clock,
             egui_renderer,
@@ -587,6 +590,7 @@ impl State {
                 
                 let mut colormap = self.colormap;
                 let mut transfer = self.transfer;
+                let mut reversed = self.reversed;
 
                 let cube = self.cube.as_ref();
                 let queue = &self.queue;
@@ -601,7 +605,7 @@ impl State {
                 let moment0_texture = &mut self.moment0_texture;
                 let naxis = &self.naxis;
                 let mut old_bbox_settings = [ra, dec, fov, f1, f2, ra_min, ra_max, dec_min, dec_max, fov_min, fov_max, fmin, fmax, slice_idx as f32];
-                let mut old_render_params = (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color);
+                let mut old_render_params = (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color, reversed);
                 let mut old_scene_settings = (theta, delta, perspective);
                 if show_options {
                     egui::SidePanel::left("fits3 options")
@@ -647,6 +651,8 @@ impl State {
                                     ui.selectable_value(&mut transfer, TransferFunc::Asinh, "Asinh");
                                     ui.selectable_value(&mut transfer, TransferFunc::Log, "Log");
                                 });
+
+                            ui.checkbox(&mut reversed, "Reverse");
                         });
                         
                         ui.separator();
@@ -910,7 +916,7 @@ impl State {
                         needs_redraw = true;
                     }
 
-                    if old_render_params != (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color) {
+                    if old_render_params != (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color, reversed) {
                         queue.write_buffer(
                             &buffers["render_params"],
                             0,
@@ -919,7 +925,8 @@ impl State {
                                 colormap: colormap as i32,
                                 diffuse_color,
                                 transfer: transfer as i32,
-                                _pad1: [0.0; 3],
+                                reversed: reversed as i32,
+                                _pad1: [0.0; 2],
                             }),
                         );
 
@@ -938,6 +945,7 @@ impl State {
                     self.show_unique_slice = show_unique_slice;
                     self.colormap = colormap;
                     self.transfer = transfer;
+                    self.reversed = reversed;
                     self.min_cut = min_cut;
                     self.max_cut = max_cut;
 
