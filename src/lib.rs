@@ -1288,137 +1288,6 @@ impl ApplicationHandler<UserEvent> for App {
                 window.request_redraw();
             }
             WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(KeyCode::Space),
-                        ..
-                    },
-                ..
-            } => {
-                state.set_camera_position(std::f64::consts::PI,0.0,0.0,0.0, window);
-            }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(KeyCode::ArrowLeft),
-                        ..
-                    },
-                ..
-            } => {
-                state.theta -= std::f64::consts::PI/4.0;
-                state.set_camera_position(state.theta, 0.0, state.delta, 0.0, window);
-            }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(KeyCode::ArrowRight),
-                        ..
-                    },
-                ..
-            } => {
-                state.theta += std::f64::consts::PI/4.0;
-                state.set_camera_position(state.theta, 0.0, state.delta, 0.0, window);
-            }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(KeyCode::ArrowUp),
-                        ..
-                    },
-                ..
-            } => {
-                state.delta = (state.delta + std::f64::consts::PI / 4.0).clamp(
-                    -std::f64::consts::PI * 0.5 + 1e-3,
-                    std::f64::consts::PI * 0.5 - 1e-3,
-                );
-                state.set_camera_position(state.theta, state.dtheta, state.delta, state.ddelta, window);
-            }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(KeyCode::ArrowDown),
-                        ..
-                    },
-                ..
-            } => {
-                state.delta = (state.delta - std::f64::consts::PI / 4.0).clamp(
-                    -std::f64::consts::PI * 0.5 + 1e-3,
-                    std::f64::consts::PI * 0.5 - 1e-3,
-                );
-                state.set_camera_position(state.theta, state.dtheta, state.delta, state.ddelta, window);
-            }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(KeyCode::KeyF) | PhysicalKey::Code(KeyCode::Numpad2),
-                        ..
-                    },
-                ..
-            } => {
-                state.set_camera_position(std::f64::consts::PI,0.0,0.0,0.0, window);
-            }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(KeyCode::KeyB) | PhysicalKey::Code(KeyCode::Numpad8),
-                        ..
-                    },
-                ..
-            } => {
-                state.set_camera_position(0.0,0.0,0.0,0.0, window);
-            }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(KeyCode::KeyL) | PhysicalKey::Code(KeyCode::Numpad4),
-                        ..
-                    },
-                ..
-            } => {
-                state.set_camera_position(-std::f64::consts::PI * 0.5,0.0,0.0,0.0, window);
-            }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(KeyCode::KeyR) | PhysicalKey::Code(KeyCode::Numpad6),
-                        ..
-                    },
-                ..
-            } => {
-                state.set_camera_position(std::f64::consts::PI * 0.5,0.0,0.0,0.0, window);
-            }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(KeyCode::KeyT) | PhysicalKey::Code(KeyCode::Numpad0),
-                        ..
-                    },
-                ..
-            } => {
-                state.set_camera_position(std::f64::consts::PI, 0.0, std::f64::consts::PI * 0.5 - 1e-3,0.0, window);
-            }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        physical_key: PhysicalKey::Code(KeyCode::Numpad5),
-                        ..
-                    },
-                ..
-            } => {
-                state.set_camera_position(std::f64::consts::PI,0.0,-std::f64::consts::PI * 0.5 + 1e-3,0.0, window);
-            }
-            WindowEvent::KeyboardInput {
                 event,
                 ..
             } => {
@@ -1427,6 +1296,89 @@ impl ApplicationHandler<UserEvent> for App {
                     state.show_options = !state.show_options;
 
                     window.request_redraw();
+                });
+
+
+
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::ArrowDown), &event, false, || {
+                    state.delta = (state.delta - std::f64::consts::PI / 4.0).clamp(
+                        -std::f64::consts::PI * 0.5 + 1e-3,
+                        std::f64::consts::PI * 0.5 - 1e-3,
+                    );
+                    state.set_camera_position(state.theta, state.dtheta, state.delta, state.ddelta, window);
+                });
+
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::ArrowUp), &event, false, || {
+                    state.delta = (state.delta + std::f64::consts::PI / 4.0).clamp(
+                        -std::f64::consts::PI * 0.5 + 1e-3,
+                        std::f64::consts::PI * 0.5 - 1e-3,
+                    );
+                    state.set_camera_position(state.theta, state.dtheta, state.delta, state.ddelta, window);
+                });
+
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::ArrowRight), &event, false, || {
+                    state.theta += std::f64::consts::PI/4.0;
+                    state.set_camera_position(state.theta, 0.0, state.delta, 0.0, window);
+
+                    window.request_redraw();
+                });
+
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::ArrowLeft), &event, false, || {
+                    state.theta -= std::f64::consts::PI/4.0;
+                    state.set_camera_position(state.theta, 0.0, state.delta, 0.0, window);
+
+                    window.request_redraw();
+                });
+
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::Space), &event, false, || {
+                    state.set_camera_position(std::f64::consts::PI,0.0,0.0,0.0, window);
+
+                    window.request_redraw();
+                });
+
+                // front view
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::KeyF), &event, false, || {
+                    state.set_camera_position(std::f64::consts::PI,0.0,0.0,0.0, window);
+                });
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::Numpad5), &event, false, || {
+                    state.set_camera_position(std::f64::consts::PI,0.0,0.0,0.0, window);
+                });
+
+                // back view
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::KeyB), &event, false, || {
+                    state.set_camera_position(0.0,0.0,0.0,0.0, window);
+                });
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::Numpad0), &event, false, || {
+                    state.set_camera_position(0.0,0.0,0.0,0.0, window);
+                });
+
+                // left view
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::KeyL), &event, false, || {
+                    state.set_camera_position(-std::f64::consts::PI * 0.5,0.0,0.0,0.0, window);
+                });
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::Numpad4), &event, false, || {
+                    state.set_camera_position(-std::f64::consts::PI * 0.5,0.0,0.0,0.0, window);
+                });
+
+                // right view
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::KeyR), &event, false, || {
+                    state.set_camera_position(std::f64::consts::PI * 0.5,0.0,0.0,0.0, window);
+                });
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::Numpad6), &event, false, || {
+                    state.set_camera_position(std::f64::consts::PI * 0.5,0.0,0.0,0.0, window);
+                });
+
+                // top view
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::KeyT), &event, false, || {
+                    state.set_camera_position(std::f64::consts::PI, 0.0, std::f64::consts::PI * 0.5 - 1e-3,0.0, window);
+                });
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::Numpad8), &event, false, || {
+                    state.set_camera_position(std::f64::consts::PI, 0.0, std::f64::consts::PI * 0.5 - 1e-3,0.0, window);
+                });
+
+                // bottom view
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::Numpad2), &event, false, || {
+                    state.set_camera_position(std::f64::consts::PI,0.0,-std::f64::consts::PI * 0.5 + 1e-3,0.0, window);
                 });
             },
             WindowEvent::Resized(physical_size) => state.resize(physical_size),
