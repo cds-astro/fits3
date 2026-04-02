@@ -23,8 +23,8 @@ pub(crate) struct RenderParams {
     pub cut_iso: [f32; 3],
     pub colormap: i32,
     pub diffuse_color: [f32; 4],
+    pub bg_color: [f32; 3],
     pub transfer: i32,
-    pub _pad1: [f32; 3],
 }
 
 #[repr(C)]

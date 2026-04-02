@@ -32,6 +32,8 @@ uniform RenderParams {
     // z = isosurface
     // w = colormap_selected (cast to float)
     vec4 diffuse_color;
+
+    vec3 bg_color;
     int transfer;
 };
 
@@ -246,11 +248,9 @@ const float camera_near = 1.0;
 //const float dmax = 1.179221552E-02;
 
 float probe_cube(vec3 p) {
-    float v = to_l_endian(texture(sampler3D(t_map, s_map), p).r);
-    return mix(v, -1e30, isnan(v));
+    return to_l_endian(texture(sampler3D(t_map, s_map), p).r);
 }
 float probe_downsampled_cube(vec3 p) {
-    // no need to handle NaNs because it is assumed there are none by construction.
     return texture(sampler3D(td_map, sd_map), p).r;
 }
 
@@ -283,7 +283,8 @@ void main() {
     float t_f = min(t_far.x, min(t_far.y, t_far.z));
 
     if (t_f < t_c) {
-        discard;
+        f_color = vec4(bg_color, 1.0);
+        return;
     }
 
     vec3 abs_r = abs(r);
@@ -292,7 +293,11 @@ void main() {
 
     vec3 f = (cube_size.xyz) / (cube_size.xyz + padding.xyz);
 
-    vec3 inv_dir = abs_r * cube_size.xyz;
+    vec3 zoom_dscale = zoom_h - zoom_l;
+    vec3 zoom_scale = zoom_dscale * f;
+    vec3 zoom_offset = zoom_l;
+
+    vec3 inv_dir = abs_r * cube_size.xyz * zoom_scale;
     float step = 1.0 / max(max(inv_dir.x, inv_dir.y), inv_dir.z);
     
     vec3 coarse_size = (cube_size.xyz + padding.xyz) / block_size.xyz;
@@ -320,17 +325,30 @@ void main() {
     tMax   = mix(tMax,   vec3(1e30), zero_dir);
 
     //int num_sampling = 0;
+    //int num_max_sampling = max(1, int((t_f - t_c) / step));
 
-    while (t < t_f && intensity < cut_iso.y) {
-        vec3 uv = (cell + 0.5) * coarse_inv;
-        float max_v = probe_downsampled_cube(zoom_l + uv * (zoom_h - zoom_l));
+    bool hasValue = false;
 
-        if (max_v > intensity) {
-            float boundary = min(tMax.x, min(tMax.y, tMax.z));
-            float limit = min(boundary, t_f);
+    float eps = 0.1 * (cut_iso.y - cut_iso.x);
 
-            while(t < limit && intensity < cut_iso.y) {
-                float v = probe_cube(zoom_l + p * f * (zoom_h - zoom_l));
+    vec3 uv_step = coarse_inv * step_dir;
+    vec3 uv = zoom_offset + (cell + 0.5) * coarse_inv * zoom_dscale;
+
+    while (t < t_f && intensity + eps < cut_iso.y) {
+        float max_v_in_cell = probe_downsampled_cube(uv);
+        bool coarse_cell_valid = !isnan(max_v_in_cell);
+
+        //num_sampling += 1;
+
+        float tNext = min(tMax.x, min(tMax.y, tMax.z));
+        if (coarse_cell_valid && ((!hasValue && coarse_cell_valid) || max_v_in_cell > intensity)) {
+            float limit = min(tNext, t_f);
+
+            while(t < limit && intensity + eps < cut_iso.y) {
+                float v = probe_cube(zoom_offset + p * zoom_scale);
+
+                bool valid = !isnan(v);
+                hasValue |= valid;
                 intensity = max(intensity, v);
 
                 //num_sampling += 1;
@@ -341,19 +359,21 @@ void main() {
         }
 
         float t_prev = t;
-
-        bvec3 m = lessThanEqual(tMax, min(tMax.yzx, tMax.zxy));
-        vec3 mask = vec3(m);
-
-        t = dot(mask, tMax);
+        vec3 mask = step(tMax, vec3(tNext));
+        t = tNext;
 
         cell += mask * step_dir;
         tMax += mask * tDelta;
 
         p += r * (t - t_prev);
+
+        uv += mask * uv_step * zoom_dscale;
     }
 
     intensity = clamp((intensity - cut_iso.x) / (cut_iso.y - cut_iso.x), 0.0, 1.0);
-    f_color = colormap(transfer(intensity));
+    f_color = mix(vec4(bg_color, 1.0), colormap(transfer(intensity)), float(hasValue));
+
+    //f_color = vec4(vec3(float(num_sampling) / float(num_max_sampling)), 1.0);
+    //f_color = mix(vec4(0.0, 1.0, 0.0, 1.0), vec4(float(abs(num_max_sampling - num_sampling)) / float(num_sampling), 0.0, 0.0, 1.0), float(num_sampling > num_max_sampling));
 }
  

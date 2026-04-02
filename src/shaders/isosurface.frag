@@ -33,6 +33,9 @@ uniform RenderParams {
     // z = isosurface
     // w = colormap_selected (cast to float)
     vec4 diffuse_color;
+
+    vec3 bg_color;
+    int transfer;
 };
 
 layout(set = 0, binding = 7)

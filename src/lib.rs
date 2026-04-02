@@ -163,6 +163,8 @@ struct State {
     isosurface: f32,
     // a diffuse color to show the isosurface with
     diffuse_color: [f32; 4],
+    // a background color
+    bg_color: [f32; 3],
     // perspective rendering mode
     perspective: bool,
     // slice index
@@ -309,7 +311,7 @@ impl State {
                 colormap: 0,
                 diffuse_color: [0.0 as f32, 1.0, 0.0, 1.0],
                 transfer: 0,
-                _pad1: [0.0; 3],
+                bg_color: [0.0_f32; 3],
             })
         );
 
@@ -389,6 +391,7 @@ impl State {
             isosurface: 0.0,
             slice_idx: 0,
             diffuse_color: [0.0, 1.0, 0.0, 1.0],
+            bg_color: [0.0_f32; 3],
             show_isosurface: false,
             show_options: false,
             show_unique_slice: false,
@@ -515,6 +518,7 @@ impl State {
                 let mut isosurface = self.isosurface;
                 let mut perspective = self.perspective;
                 let mut diffuse_color = self.diffuse_color;
+                let mut bg_color = self.bg_color;
                 let mut show_isosurface = self.show_isosurface;
                 let mut show_options = self.show_options;
                 let mut show_unique_slice = self.show_unique_slice;
@@ -601,7 +605,7 @@ impl State {
                 let moment0_texture = &mut self.moment0_texture;
                 let naxis = &self.naxis;
                 let mut old_bbox_settings = [ra, dec, fov, f1, f2, ra_min, ra_max, dec_min, dec_max, fov_min, fov_max, fmin, fmax, slice_idx as f32];
-                let mut old_render_params = (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color);
+                let mut old_render_params = (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color, bg_color);
                 let mut old_scene_settings = (theta, delta, perspective);
                 if show_options {
                     egui::SidePanel::left("fits3 options")
@@ -647,6 +651,9 @@ impl State {
                                     ui.selectable_value(&mut transfer, TransferFunc::Asinh, "Asinh");
                                     ui.selectable_value(&mut transfer, TransferFunc::Log, "Log");
                                 });
+
+                            ui.label("Background color");
+                            ui.color_edit_button_rgb(&mut bg_color);
                         });
                         
                         ui.separator();
@@ -910,7 +917,7 @@ impl State {
                         needs_redraw = true;
                     }
 
-                    if old_render_params != (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color) {
+                    if old_render_params != (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color, bg_color) {
                         queue.write_buffer(
                             &buffers["render_params"],
                             0,
@@ -919,7 +926,7 @@ impl State {
                                 colormap: colormap as i32,
                                 diffuse_color,
                                 transfer: transfer as i32,
-                                _pad1: [0.0; 3],
+                                bg_color,
                             }),
                         );
 
@@ -934,6 +941,7 @@ impl State {
                     self.isosurface = isosurface;
                     self.perspective = perspective;
                     self.diffuse_color = diffuse_color;
+                    self.bg_color = bg_color;
                     self.show_isosurface = show_isosurface;
                     self.show_unique_slice = show_unique_slice;
                     self.colormap = colormap;

@@ -216,16 +216,22 @@ fn downsample_8x(
 
                 let mut max = f32::NEG_INFINITY;
 
+                let mut is_nan = true;
                 for z in start_z..end_z {
                     for y in start_y..end_y {
                         for x in start_x..end_x {
                             let idx = x + size_x * (y + size_y * z);
                             let p = input[idx];
                             if !p.is_nan() {
+                                is_nan = false;
                                 max = p.max(max);
                             }
                         }
                     }
+                }
+
+                if is_nan {
+                    max = f32::NAN;
                 }
 
                 let out_idx = ox + new_x * (oy + new_y * oz);
