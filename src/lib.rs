@@ -14,6 +14,8 @@ use std::path::PathBuf;
 #[cfg(not(target_arch = "wasm32"))]
 use egui_file_dialog::FileDialog;
 
+use egui::Color32;
+
 #[repr(i32)]
 #[derive(PartialEq, Copy, Clone)]
 #[derive(Debug)]
@@ -174,6 +176,7 @@ struct State {
     show_isosurface: bool,
     show_options: bool,
     show_unique_slice: bool,
+    show_shortkeys: bool,
 
 
     // The cube real data
@@ -395,6 +398,7 @@ impl State {
             show_isosurface: false,
             show_options: false,
             show_unique_slice: false,
+            show_shortkeys: false,
             cube: None,
 
             delta: 0.0,
@@ -521,6 +525,7 @@ impl State {
                 let mut bg_color = self.bg_color;
                 let mut show_isosurface = self.show_isosurface;
                 let mut show_options = self.show_options;
+                let mut show_shortkeys = self.show_shortkeys;
                 let mut show_unique_slice = self.show_unique_slice;
                 let mut min_cut = self.min_cut;
                 let mut max_cut = self.max_cut;
@@ -573,6 +578,9 @@ impl State {
 
                         ui.checkbox(&mut show_options, "Show options (Ctrl+O)")
                             .on_hover_text("Toggle with: Ctrl+O");
+
+                        ui.checkbox(&mut show_shortkeys, "Show shortkeys (Ctrl+I)")
+                            .on_hover_text("Toggle with: Ctrl+I");
                     });
                 });
 
@@ -654,6 +662,15 @@ impl State {
 
                             ui.label("Background color");
                             ui.color_edit_button_rgb(&mut bg_color);
+                        });
+
+                        ui.separator();
+
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Slider::new(&mut theta, -std::f32::consts::PI..=std::f32::consts::PI).text("theta"));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Slider::new(&mut delta, -std::f32::consts::PI..=std::f32::consts::PI).text("delta"));
                         });
                         
                         ui.separator();
@@ -974,6 +991,28 @@ impl State {
                 if self.needs_redraw || ctx.has_requested_repaint() {
                     window.request_redraw();
                 }
+
+                if show_shortkeys {
+                    egui::Window::new("fits3 shortkeys")
+                    .resizable(true)
+                    .show(ctx, |ui| {
+                        ui.label("Shortkeys to display the differents faces of the cube :");
+                        ui.label("Front : F | 5");
+                        ui.label("Left  : L | 4");
+                        ui.label("Right : R | 6");
+                        ui.label("Top   : T | 8");
+                        ui.label("Back  : B | 0");
+                        ui.label("Bottom: 2");
+
+                        ui.separator();
+
+                        ui.label("Press 'SPACE' to reset the view");
+
+                        ui.label("Use 'Arrow keys' to move around the cube.");
+                    });
+                }
+
+                self.show_shortkeys = show_shortkeys;
                 
                 #[cfg(not(target_arch = "wasm32"))]
                 let sf = window.scale_factor() as f32;
@@ -1433,6 +1472,12 @@ impl ApplicationHandler<UserEvent> for App {
                 // Ctrl+O
                 self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::KeyO), &event, true, || {
                     state.show_options = !state.show_options;
+
+                    window.request_redraw();
+                });
+
+                self.shortcuts.process_key_event(PhysicalKey::Code(KeyCode::KeyI), &event, true, || {
+                    state.show_shortkeys = !state.show_shortkeys;
 
                     window.request_redraw();
                 });
