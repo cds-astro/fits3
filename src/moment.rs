@@ -1,17 +1,21 @@
 use crate::Cube;
 
 pub(crate) fn compute_moment0(cube: &Cube) -> Vec<u8> {
-    let naxis = &cube.dim;
+    let naxis = &cube.size;
 
     let pixels_per_slice = naxis.0 * naxis.1;
     let num_voxels = (naxis.0 * naxis.1 * naxis.2) as usize;
     let mut rgba = Vec::with_capacity(num_voxels * std::mem::size_of::<f32>());
 
-    let max_val = cube.data.iter()
+    let max_val = cube
+        .data
+        .iter()
         .filter(|x| !x.is_nan())
         .max_by(|a, b| a.partial_cmp(b).unwrap())
         .unwrap_or(&1.0);
-    let min_val = cube.data.iter()
+    let min_val = cube
+        .data
+        .iter()
         .filter(|x| !x.is_nan())
         .min_by(|a, b| a.partial_cmp(b).unwrap())
         .unwrap_or(&0.0);
@@ -23,14 +27,14 @@ pub(crate) fn compute_moment0(cube: &Cube) -> Vec<u8> {
             let mut n = 0;
             let mut sum = 0.0;
 
-            let mut i = (x + y*naxis.0) as usize;
+            let mut i = (x + y * naxis.0) as usize;
             for _ in 0..naxis.2 {
                 if !cube.data[i].is_nan() {
                     sum += cube.data[i];
                     n += 1;
                 }
 
-                i = i + pixels_per_slice as usize;
+                i += pixels_per_slice as usize;
             }
 
             if n == 0 {

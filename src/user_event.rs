@@ -1,16 +1,16 @@
-use winit::event_loop::{EventLoop, EventLoopProxy};
 use std::cell::RefCell;
+use winit::event_loop::{EventLoop, EventLoopProxy};
 
 thread_local! {
     static PROXY: RefCell<Option<EventLoopProxy<UserEvent>>> =
-        RefCell::new(None);
+        const { RefCell::new(None) };
 }
 
-pub(crate) enum UserEvent {
+pub enum UserEvent {
     DisplayData,
 }
 
-pub(crate) fn create_proxy(event_loop: &EventLoop<UserEvent>) {
+pub fn create_proxy(event_loop: &EventLoop<UserEvent>) {
     let proxy = event_loop.create_proxy();
 
     PROXY.with(|p| {
@@ -18,14 +18,11 @@ pub(crate) fn create_proxy(event_loop: &EventLoop<UserEvent>) {
     });
 }
 
-pub(crate) fn send_event(event: UserEvent) {
+#[cfg(target_arch = "wasm32")]
+pub fn send_event(event: UserEvent) {
     PROXY.with(|p| {
         if let Some(proxy) = &*p.borrow() {
             proxy.send_event(event).ok();
         }
     });
 }
-
-
-
-

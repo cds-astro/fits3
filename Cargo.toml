@@ -11,7 +11,7 @@ env_logger = "0.10"
 log = "0.4"
 futures = "0.3"
 bytemuck = { version = "1.4", features = [ "derive" ] }
-cgmath = "0.18.0"
+glam = "0.32.1"
 byte-slice-cast = "1.0.0"
 wgpu = { version = "27.0.1", features = ["glsl"]}
 pollster = "0.3"
@@ -24,6 +24,8 @@ egui-winit = { version = "0.33.3", default-features = false}
 egui-wgpu = { version = "0.33.3", default-features = false }
 egui_double_slider = "1.0.0"
 egui-file-dialog = "0.12.0"
+egui_plot = "0.34.*"
+image = {version = "0.25.10", default-features = false, features = ["png"]  }
 
 
 [lib]
@@ -57,6 +59,7 @@ wasm-bindgen-futures = "0.4.30"
 getrandom = { version = "0.3.3", features = ["wasm_js"] }
 async-channel = { version = "2.3.1" }
 lazy_static = "1.5.0"
+futures-intrusive = "0.5"
 egui = "0.33.3"
 # default-features set to false to bind egui with or winit
 egui-winit = { version = "0.33.3", default-features = false} 

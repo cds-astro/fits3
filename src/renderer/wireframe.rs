@@ -1,47 +1,48 @@
+use crate::Vertex;
 use wgpu::util::DeviceExt;
 use wgpu::TextureView;
-use crate::Vertex;
-use crate::Vec4;
 
 use crate::uniform::*;
 
-use crate::ViewPort;
+use crate::state::ViewPort;
 
 pub const CUBE_VERTICES: &[Vertex] = &[
     // bottom face
-    Vertex { xyz: [-0.5, -0.5, -0.5] }, // 0
-    Vertex { xyz: [ 0.5, -0.5, -0.5] }, // 1
-    Vertex { xyz: [ 0.5, -0.5,  0.5] }, // 2
-    Vertex { xyz: [-0.5, -0.5,  0.5] }, // 3
-
+    Vertex {
+        xyz: [-0.5, -0.5, -0.5],
+    }, // 0
+    Vertex {
+        xyz: [0.5, -0.5, -0.5],
+    }, // 1
+    Vertex {
+        xyz: [0.5, -0.5, 0.5],
+    }, // 2
+    Vertex {
+        xyz: [-0.5, -0.5, 0.5],
+    }, // 3
     // top face
-    Vertex { xyz: [-0.5,  0.5, -0.5] }, // 4
-    Vertex { xyz: [ 0.5,  0.5, -0.5] }, // 5
-    Vertex { xyz: [ 0.5,  0.5,  0.5] }, // 6
-    Vertex { xyz: [-0.5,  0.5,  0.5] }, // 7
+    Vertex {
+        xyz: [-0.5, 0.5, -0.5],
+    }, // 4
+    Vertex {
+        xyz: [0.5, 0.5, -0.5],
+    }, // 5
+    Vertex {
+        xyz: [0.5, 0.5, 0.5],
+    }, // 6
+    Vertex {
+        xyz: [-0.5, 0.5, 0.5],
+    }, // 7
 ];
 
 pub const CUBE_LINE_INDICES: &[u16] = &[
     // bottom square
-    0, 1,
-    1, 2,
-    2, 3,
-    3, 0,
-
-    // top square
-    4, 5,
-    5, 6,
-    6, 7,
-    7, 4,
-
-    // vertical edges
-    0, 4,
-    1, 5,
-    2, 6,
-    3, 7,
+    0, 1, 1, 2, 2, 3, 3, 0, // top square
+    4, 5, 5, 6, 6, 7, 7, 4, // vertical edges
+    0, 4, 1, 5, 2, 6, 3, 7,
 ];
 
-pub(crate) struct SelectorRenderer {
+pub(crate) struct WireframeRenderer {
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -50,32 +51,36 @@ pub(crate) struct SelectorRenderer {
 }
 
 use std::collections::HashMap;
-impl SelectorRenderer {
-    pub(crate) fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, buffers: &HashMap<&'static str, wgpu::Buffer>) -> Self {
+impl WireframeRenderer {
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        buffers: &HashMap<&'static str, wgpu::Buffer>,
+    ) -> Self {
         let texture_bind_group_layout =
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                // scene uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Scene>() as wgpu::BufferAddress,
-                        ),
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    // scene uniform
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(
+                                std::mem::size_of::<Scene>() as wgpu::BufferAddress
+                            ),
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-            label: Some("texture_bind_group_layout"),
-        });
+                ],
+                label: Some("texture_bind_group_layout"),
+            });
 
-        let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
+        let diffuse_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &texture_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &buffers["scene"],
@@ -84,10 +89,9 @@ impl SelectorRenderer {
                             std::mem::size_of::<Scene>() as wgpu::BufferAddress
                         ),
                     }),
-                },
-            ],
-            label: Some("diffuse_bind_group"),
-        });
+                }],
+                label: Some("diffuse_bind_group"),
+            });
 
         // uniform buffer
         let vs_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -98,7 +102,7 @@ impl SelectorRenderer {
                     .unwrap()
                     .into(),
                 #[cfg(target_arch = "wasm32")]
-                shader: include_str!("shaders/wireframe.vert").into(),
+                shader: include_str!("../shaders/wireframe.vert").into(),
                 stage: wgpu::naga::ShaderStage::Vertex,
                 defines: Default::default(),
             },
@@ -111,7 +115,7 @@ impl SelectorRenderer {
                     .unwrap()
                     .into(),
                 #[cfg(target_arch = "wasm32")]
-                shader: include_str!("shaders/wireframe.frag").into(),
+                shader: include_str!("../shaders/wireframe.frag").into(),
                 stage: wgpu::naga::ShaderStage::Fragment,
                 defines: Default::default(),
             },
@@ -169,12 +173,12 @@ impl SelectorRenderer {
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&CUBE_VERTICES),
+            contents: bytemuck::cast_slice(CUBE_VERTICES),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&CUBE_LINE_INDICES),
+            contents: bytemuck::cast_slice(CUBE_LINE_INDICES),
             usage: wgpu::BufferUsages::INDEX,
         });
 
@@ -186,10 +190,15 @@ impl SelectorRenderer {
         }
     }
 
-    pub(crate) fn render_frame(&self, encoder: &mut wgpu::CommandEncoder, window_surface_view: &TextureView, viewport: &ViewPort) {
+    pub(crate) fn render_frame(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        window_surface_view: &TextureView,
+        viewport: &ViewPort,
+    ) {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
-            
+
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: window_surface_view,
                 resolve_target: None,
@@ -205,20 +214,10 @@ impl SelectorRenderer {
             //multiview_mask: None,
         });
 
-        render_pass.set_viewport(
-            viewport.x,
-            viewport.y,
-            viewport.width,
-            viewport.height,
-            0.0,
-            1.0,
-        );
-
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass
-            .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         render_pass.draw_indexed(0..CUBE_LINE_INDICES.len() as u32, 0, 0..1);
     }
 }

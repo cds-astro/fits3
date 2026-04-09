@@ -1,6 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
+#[derive(Clone)]
 pub(crate) struct Clock {
     #[cfg(not(target_arch = "wasm32"))]
     instant: std::time::Instant,

@@ -1,11 +1,10 @@
-
-use crate::user_event::UserEvent;
-use wasm_bindgen::prelude::wasm_bindgen;
-use winit::window::Window;
 use crate::uniform::Scene;
+use crate::user_event::UserEvent;
 use crate::State;
 use std::mem::offset_of;
 use std::ops::Range;
+use wasm_bindgen::prelude::wasm_bindgen;
+use winit::window::Window;
 
 #[derive(Debug, Default)]
 pub(crate) struct Params {
@@ -31,13 +30,13 @@ lazy_static! {
 pub fn set_perspective(perspective: bool) {
     wasm_bindgen_futures::spawn_local(async move {
         CHANNEL_PARAMS
-        .0
-        .send(Params {
-            perspective: Some(perspective),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+            .0
+            .send(Params {
+                perspective: Some(perspective),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
     });
 
     // Wake up the winit window event
@@ -47,13 +46,13 @@ pub fn set_perspective(perspective: bool) {
 pub fn normalize(min: f32, max: f32) {
     wasm_bindgen_futures::spawn_local(async move {
         CHANNEL_PARAMS
-        .0
-        .send(Params {
-            cuts: Some(min..max),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+            .0
+            .send(Params {
+                cuts: Some(min..max),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
     });
 
     // Wake up the winit window event
@@ -71,13 +70,13 @@ pub fn onselect(func: js_sys::Function) {
 pub fn display(raw_bytes: js_sys::Uint8Array) {
     wasm_bindgen_futures::spawn_local(async move {
         CHANNEL_PARAMS
-        .0
-        .send(Params {
-            data: Some(raw_bytes.to_vec()),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+            .0
+            .send(Params {
+                data: Some(raw_bytes.to_vec()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
     });
 
     // Wake up the winit window event
@@ -92,45 +91,37 @@ pub(crate) fn handle_events(state: &mut State, window: &Window) {
             data,
             ..
         } = params;
-        
+
         if let Some(perspective) = perspective {
-            state.queue.write_buffer(
-            &state.buffers["scene"],
-            offset_of!(Scene, perspective) as wgpu::BufferAddress,
-            bytemuck::bytes_of(&[
-                if perspective { 1.0_f32 } else { 0.0_f32 },
-                ]),
-            );
-            
-            state.perspective = perspective;
+            state.set_perspective(perspective);
             window.request_redraw();
         }
-            
+
         if let Some(cuts) = cuts {
             state.queue.write_buffer(
-                &state.buffers["render_params"],
+                &state.buffers["volumetric_render_params"],
                 0,
                 bytemuck::bytes_of(&[cuts.start, cuts.end]),
             );
-            
+
             state.min_cut = cuts.start;
             state.max_cut = cuts.end;
-            
+
             window.request_redraw();
         }
-            
+
         if let Some(data) = data {
             use std::io::Cursor;
-            
+
             let reader = Cursor::new(data.as_slice());
             match state.visualize_cube(reader) {
                 Ok(()) => {}
                 Err(error) => web_sys::window()
-                .unwrap()
-                .alert_with_message(error)
-                .unwrap(),
+                    .unwrap()
+                    .alert_with_message(error)
+                    .unwrap(),
             }
-            
+
             window.request_redraw();
         }
     }

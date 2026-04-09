@@ -15,6 +15,7 @@ uniform Scene {
     vec4 win_size;
     vec4 origin;
     vec4 perspective;
+    float zoom_factor;
 };
 
 layout(set = 0, binding = 5)
@@ -26,19 +27,20 @@ uniform Volume {
 };
 
 layout(set = 0, binding = 6)
-uniform RenderParams {
-    vec3 cut_iso;
-    int colormap;
-    // x,y = cut
-    // z = isosurface
-    // w = colormap_selected (cast to float)
-    vec4 diffuse_color;
-
-    vec3 bg_color;
+uniform VolumetricRenderParams {
+    vec2 cut;
     int transfer;
+    int colormap;
+    vec3 bg_color;
 };
 
 layout(set = 0, binding = 7)
+uniform SurfaceRenderParams {
+    vec4 diffuse_color;
+    float isosurface;
+};
+
+layout(set = 0, binding = 8)
 uniform Interaction {
     vec3 zoom_l;
     float _pad3; // padding!
@@ -182,7 +184,7 @@ void main() {
     // p in [0; 1]
     vec3 p = p_cam + r * t + vec3(0.5);
 
-    float intensity = cut_iso.x;
+    float intensity = cut.x;
 
     vec3 step_dir = sign(r);
     vec3 cell = floor(p * coarse_size * f);
@@ -202,20 +204,20 @@ void main() {
     float v = -1e30;
     float vv = v;
 
-    while (t < t_f && v < cut_iso.z) {
+    while (t < t_f && v < isosurface) {
         vec3 uv = (cell + 0.5) * coarse_inv;
         float max_v = probe_downsampled_cube(zoom_l + uv * (zoom_h - zoom_l));
 
-        if (max_v > cut_iso.z) {
+        if (max_v > isosurface) {
             float boundary = min(tMax.x, min(tMax.y, tMax.z));
             float limit = min(boundary, t_f);
  
-            while(v < cut_iso.z && t < limit) {
+            while(v < isosurface && t < limit) {
                 vv = v;
                 v = probe_cube(zoom_l + p * f * (zoom_h - zoom_l));
                 num_sampling += step;
 
-                if (v > cut_iso.z)
+                if (v > isosurface)
                     break;
 
                 pp = p;
@@ -223,7 +225,7 @@ void main() {
                 t += step;
             }
 
-            if (v > cut_iso.z)
+            if (v > isosurface)
                 break;
         }
 
@@ -247,6 +249,6 @@ void main() {
     float diffuse = max(dot(N, light_dir), 0.0);
     vec4 color = vec4(diffuse_color.rgb * 0.05 + diffuse_color.rgb * diffuse, diffuse_color.a);
 
-    f_color = mix(vec4(0.0, 0.0, 0.0, 1.0), color, float(v > cut_iso.z));
+    f_color = mix(vec4(0.0, 0.0, 0.0, 1.0), color, float(v > isosurface));
 }
  

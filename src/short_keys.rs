@@ -1,4 +1,4 @@
-use winit::{event::*, keyboard::KeyCode};
+use winit::event::*;
 use winit::keyboard::{ModifiersState, PhysicalKey};
 
 pub(crate) struct ShortKeyCommands {
@@ -29,8 +29,7 @@ impl ShortKeyCommands {
         event: &KeyEvent,
         require_ctrl: bool,
         f: F,
-    )
-    where
+    ) where
         F: FnOnce(),
     {
         // Only act on key press

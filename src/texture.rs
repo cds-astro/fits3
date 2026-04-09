@@ -17,6 +17,7 @@ impl TextureFormat for [u8; 4] {
     const WGPU_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 }
 impl Texture {
+    #[warn(clippy::too_many_arguments)]
     fn from_bytes_rgba(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -32,7 +33,7 @@ impl Texture {
         let padded_dimensions = (
             dimensions.0 + padding.0,
             dimensions.1 + padding.1,
-            dimensions.2 + padding.2
+            dimensions.2 + padding.2,
         );
 
         let limits = device.limits();

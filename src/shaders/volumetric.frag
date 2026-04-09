@@ -14,6 +14,7 @@ uniform Scene {
     vec4 win_size;
     vec4 origin;
     vec4 perspective;
+    float zoom_factor;
 };
 
 layout(set = 0, binding = 5)
@@ -25,19 +26,20 @@ uniform Volume {
 };
 
 layout(set = 0, binding = 6)
-uniform RenderParams {
-    vec3 cut_iso;
-    int colormap;
-    // x,y = cut
-    // z = isosurface
-    // w = colormap_selected (cast to float)
-    vec4 diffuse_color;
-
-    vec3 bg_color;
+uniform VolumetricRenderParams {
+    vec2 cut;
     int transfer;
+    int colormap;
+    vec3 bg_color;
 };
 
 layout(set = 0, binding = 7)
+uniform SurfaceRenderParams {
+    vec4 diffuse_color;
+    float isosurface;
+};
+
+layout(set = 0, binding = 8)
 uniform Interaction {
     vec3 zoom_l;
     float _pad3; // padding!
@@ -254,9 +256,15 @@ float probe_downsampled_cube(vec3 p) {
     return texture(sampler3D(td_map, sd_map), p).r;
 }
 
+bool isnan_custom( float val )
+{
+    return isnan(val) | isinf(val);
+}
+
 void main() {
     vec3 cam_origin = lonlat2xyz(origin.x, origin.y);
 
+    //vec2 ndc = ndc * zoom_factor;
     // vector from camera origin to the look
     vec3 cam_dir = -cam_origin;
     // origin of the screen in world space
@@ -311,7 +319,7 @@ void main() {
     // p in [0; 1]
     vec3 p = p_cam + r * t + vec3(0.5);
 
-    float intensity = cut_iso.x;
+    float intensity = cut.x;
 
     vec3 step_dir = sign(r);
     vec3 cell = floor(p * coarse_size * f);
@@ -329,14 +337,14 @@ void main() {
 
     bool hasValue = false;
 
-    float eps = 0.1 * (cut_iso.y - cut_iso.x);
+    //float eps = 0.1 * (cut.y - cut.x);
 
     vec3 uv_step = coarse_inv * step_dir;
     vec3 uv = zoom_offset + (cell + 0.5) * coarse_inv * zoom_dscale;
 
-    while (t < t_f && intensity + eps < cut_iso.y) {
+    while (t < t_f && intensity < cut.y) {
         float max_v_in_cell = probe_downsampled_cube(uv);
-        bool coarse_cell_valid = !isnan(max_v_in_cell);
+        bool coarse_cell_valid = !isnan_custom(max_v_in_cell);
 
         //num_sampling += 1;
 
@@ -344,10 +352,10 @@ void main() {
         if (coarse_cell_valid && ((!hasValue && coarse_cell_valid) || max_v_in_cell > intensity)) {
             float limit = min(tNext, t_f);
 
-            while(t < limit && intensity + eps < cut_iso.y) {
+            while(t < limit && intensity < cut.y) {
                 float v = probe_cube(zoom_offset + p * zoom_scale);
 
-                bool valid = !isnan(v);
+                bool valid = !isnan_custom(v);
                 hasValue |= valid;
                 intensity = max(intensity, v);
 
@@ -370,9 +378,9 @@ void main() {
         uv += mask * uv_step * zoom_dscale;
     }
 
-    intensity = clamp((intensity - cut_iso.x) / (cut_iso.y - cut_iso.x), 0.0, 1.0);
+    intensity = clamp((intensity - cut.x) / (cut.y - cut.x), 0.0, 1.0);
     f_color = mix(vec4(bg_color, 1.0), colormap(transfer(intensity)), float(hasValue));
-
+    //f_color = vec4(1.0, 0.0, 1.0, 1.0);
     //f_color = vec4(vec3(float(num_sampling) / float(num_max_sampling)), 1.0);
     //f_color = mix(vec4(0.0, 1.0, 0.0, 1.0), vec4(float(abs(num_max_sampling - num_sampling)) / float(num_sampling), 0.0, 0.0, 1.0), float(num_sampling > num_max_sampling));
 }

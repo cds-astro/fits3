@@ -10,6 +10,7 @@ uniform Scene {
     vec4 win_size;
     vec4 origin;
     vec4 perspective;
+    float zoom_factor;
 };
 
 vec3 lonlat2xyz(float lon, float lat) {

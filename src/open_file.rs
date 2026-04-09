@@ -1,19 +1,18 @@
 #[cfg(target_arch = "wasm32")]
-use web_sys::{HtmlInputElement, Event};
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::{closure::Closure, JsCast};
+#[cfg(target_arch = "wasm32")]
+use web_sys::{Event, HtmlInputElement};
 
 #[cfg(target_arch = "wasm32")]
 use crate::{Params, CHANNEL_PARAMS};
 
-use std::rc::Rc;
-use std::path::PathBuf;
+#[cfg(target_arch = "wasm32")]
+use crate::UserEvent;
+
+#[cfg(target_arch = "wasm32")]
 use std::cell::RefCell;
-
-use winit::window::Window;
-
-
-use crate::user_event::UserEvent;
+#[cfg(target_arch = "wasm32")]
+use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn open_file_dialog(picked_file: Rc<RefCell<Option<String>>>) {
@@ -44,7 +43,6 @@ pub(crate) fn open_file_dialog(picked_file: Rc<RefCell<Option<String>>>) {
                 let onloadend_cb = Closure::wrap(Box::new(move |_: web_sys::Event| {
                     let result = reader_cloned.result().unwrap();
                     let array = js_sys::Uint8Array::new(&result);
-                    let len = array.length() as usize;
 
                     wasm_bindgen_futures::spawn_local(async move {
                         let data = array.to_vec();

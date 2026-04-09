@@ -1,29 +1,38 @@
-
-use std::ops::Range;
 use fitsrs::card::Value;
+use std::ops::Range;
 
 use crate::Texture;
 use fitsrs::HDU;
 use std::io::Cursor;
 
+use glam::BVec3;
+use glam::UVec3;
+
 use std::convert::TryInto;
 
 use fitsrs::Fits;
 
+use glam::Vec3;
+
 pub(crate) struct Cube {
     pub data: Vec<f32>,
-    pub dim: (u32, u32, u32),
+    pub size: (u32, u32, u32),
+    pub b_size: (u32, u32, u32),
     pub mincut: f32,
     pub maxcut: f32,
     pub texture: Texture,
     pub downsampled_texture: Texture,
 
     #[cfg(target_arch = "wasm32")]
-    pub wcs: fitsrs::WCS
+    pub wcs: fitsrs::WCS,
 }
 
 impl Cube {
-    pub(crate) fn from_fits<R>(reader: Cursor<R>, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, &'static str>
+    pub(crate) fn from_fits<R>(
+        reader: Cursor<R>,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<Self, &'static str>
     where
         R: AsRef<[u8]> + std::fmt::Debug,
     {
@@ -38,7 +47,7 @@ impl Cube {
                         Some(Value::Integer { value: w, .. }),
                         Some(Value::Integer { value: h, .. }),
                         Some(Value::Integer { value: d, .. }),
-                        Some(Value::Integer { value: b, .. })
+                        Some(Value::Integer { value: b, .. }),
                     ) = (
                         header.get("NAXIS1"),
                         header.get("NAXIS2"),
@@ -70,13 +79,13 @@ impl Cube {
                                 //let minmax = first_and_last_percent_f32(&mut floats, 0.01, 99.5);
                                 let cuts = estimate_default_cuts_from_variance(&floats);
                                 (floats, cuts)
-                            },
+                            }
                             8 => {
                                 todo!();
                                 /*let mut bytes: Vec<u8> = data.to_vec();
                                 let range = first_and_last_percent(&mut bytes, 0.01, 99.5);
                                 (range.start as f32)..(range.end as f32)*/
-                            },
+                            }
                             16 => {
                                 todo!();
                                 /*let mut shorts: Vec<i16> = data
@@ -86,7 +95,7 @@ impl Cube {
 
                                 let range = first_and_last_percent(&mut shorts, 0.01, 99.5);
                                 (range.start as f32)..(range.end as f32)*/
-                            },
+                            }
                             32 => {
                                 /*let mut int32: Vec<i32> = data
                                     .chunks_exact(4)
@@ -96,7 +105,7 @@ impl Cube {
                                 let range = first_and_last_percent(&mut int32, 0.01, 99.5);
                                 (range.start as f32)..(range.end as f32)*/
                                 todo!();
-                            },
+                            }
                             64 => {
                                 /*let mut int64: Vec<i64> = data
                                     .chunks_exact(8)
@@ -106,75 +115,75 @@ impl Cube {
                                 let range = first_and_last_percent(&mut int64, 0.01, 99.5);
                                 (range.start as f32)..(range.end as f32)*/
                                 todo!();
-                            },
+                            }
                             _ => {
                                 return Err("F32 only supported");
                             }
                         };
 
-                        let bz = (d3 / 64).clamp(16, 128) as u32;
-                        let bx = 32 as u32;
-                        let by = 32 as u32;
+                        let bz = (d3 / 64).clamp(16, 128);
+                        let bx = 32_u32;
+                        let by = 32_u32;
 
-                        let downsampled_raw_bytes = downsample_8x(&data, d1 as usize, d2 as usize, d3 as usize, bx as usize, by as usize, bz as usize)
-                            .iter()
-                            .flat_map(|p| {
-                                p.to_le_bytes()
-                            })
-                            .collect::<Vec<u8>>();
+                        let downsampled_raw_bytes = downsample_8x(
+                            &data,
+                            d1 as usize,
+                            d2 as usize,
+                            d3 as usize,
+                            bx as usize,
+                            by as usize,
+                            bz as usize,
+                        )
+                        .iter()
+                        .flat_map(|p| p.to_le_bytes())
+                        .collect::<Vec<u8>>();
 
                         let original_dim = (d1, d2, d3);
                         let padding = (
                             (bx - (d1 % bx)) % bx,
                             (by - (d2 % by)) % by,
-                            (bz - (d3 % bz)) % bz
+                            (bz - (d3 % bz)) % bz,
                         );
 
                         let texture = Texture::from_raw_bytes::<f32>(
-                            &device,
-                            &queue,
-                            Some(&raw_bytes),
+                            device,
+                            queue,
+                            Some(raw_bytes),
                             original_dim,
                             padding,
                             4,
-                            "cube"
+                            "cube",
                         )?;
 
                         let downsampled_texture = Texture::from_raw_bytes::<f32>(
-                            &device,
-                            &queue,
+                            device,
+                            queue,
                             Some(&downsampled_raw_bytes),
-                            (
-                                (d1 + bx - 1) / bx,
-                                (d2 + by - 1) / by,
-                                (d3 + bz - 1) / bz
-                            ),
+                            (d1.div_ceil(bx), d2.div_ceil(by), d3.div_ceil(bz)),
                             (0, 0, 0),
                             4,
-                            "downgraded_cube"
+                            "downgraded_cube",
                         )?;
 
-                        let dim = (
-                            original_dim.0,
-                            original_dim.1,
-                            original_dim.2,
-                        );
+                        let size = (original_dim.0, original_dim.1, original_dim.2);
 
                         #[cfg(target_arch = "wasm32")]
                         let wcs = hdu.wcs().map_err(|_| "wcs not found")?;
 
+                        let b_size = (bx, by, bz);
                         // Build the downgrade resolued cube for faster raytracing.
                         // This cube will be first sampled to know whether it is interesting
                         // to sample the full resolued one or to skip to the next big voxel (8x8x8)
                         Ok(Self {
                             data,
-                            dim,
+                            size,
+                            b_size,
                             mincut: cuts.start,
                             maxcut: cuts.end,
                             #[cfg(target_arch = "wasm32")]
                             wcs,
                             texture,
-                            downsampled_texture
+                            downsampled_texture,
                         })
                     } else {
                         Err("FITS image extension not found")
@@ -186,7 +195,116 @@ impl Cube {
             Err("Is not a FITS file")
         }
     }
-} 
+
+    pub fn extract_spectra_from_origin_and_dir(
+        &self,
+        origin: &Vec3,
+        dir: &Vec3,
+        zoom_box: Option<(Vec3, Vec3)>,
+    ) -> Option<Vec<f32>> {
+        let p_cam = origin;
+
+        // vector director from the cam origin to the pixel on screen
+        // traditional perspective director vector
+        // orthographic perspective
+        let r = dir.normalize();
+
+        let bbox_min = Vec3::new(-0.5, -0.5, -0.5);
+        let bbox_max = Vec3::new(0.5, 0.5, 0.5);
+
+        let t_low = (bbox_min - p_cam) / r;
+        let t_high = (bbox_max - p_cam) / r;
+
+        let t_close = t_low.min(t_high);
+        let t_far = t_low.max(t_high);
+
+        let t_c = t_close.max_element();
+        let t_f = t_far.min_element();
+
+        if t_f > t_c {
+            let abs_r = r.abs();
+            let inv_r = 1.0 / r;
+            let cube_size = UVec3::from(self.size).as_vec3();
+
+            let (zl, zh) = zoom_box.unwrap_or((Vec3::ZERO, Vec3::ONE));
+
+            let z_dscale = zh - zl;
+            let z_scale = z_dscale;
+            let z_offset = zl;
+
+            let inv_dir = abs_r * cube_size * z_scale;
+            let step = 1.0 / inv_dir.max_element();
+
+            let size = cube_size;
+            let size_inv = 1.0 / size;
+
+            let _dr = r * step;
+            // absolute sampling point
+            // scaled to the origin of the cube
+            let mut t = t_c;
+            // p in [0; 1]
+            let mut p = p_cam + r * t + Vec3::splat(0.5);
+
+            let step_dir = r.signum();
+            let mut cell = (p * size).floor();
+            let next_boundary = (cell + step_dir.max(Vec3::ZERO)) * size_inv;
+
+            let mut t_max = t + (next_boundary - p) * inv_r;
+            let mut t_delta = size_inv * inv_r.abs();
+
+            let eps = 1e-8;
+            let zero_dir: BVec3 = r.abs().cmplt(Vec3::splat(eps));
+            let big = Vec3::splat(1e30);
+
+            t_delta = Vec3::select(zero_dir, big, t_delta);
+            t_max = Vec3::select(zero_dir, big, t_max);
+
+            let uv_step = size_inv * step_dir;
+            let mut uv = z_offset + (cell + 0.5) * size_inv * z_dscale;
+
+            let mut values = vec![];
+
+            // DDA-style voxel traversing
+            while t < t_f {
+                values.push(self.probe(&uv).unwrap());
+
+                let t_next = t_max.min_element();
+
+                let t_prev = t;
+                let b_mask = t_max.cmple(Vec3::splat(t_next));
+                let mask = Vec3::select(b_mask, Vec3::ONE, Vec3::ZERO);
+
+                t = t_next;
+
+                cell += mask * step_dir;
+                t_max += mask * t_delta;
+
+                p += r * (t - t_prev);
+
+                uv += mask * uv_step * z_dscale;
+            }
+
+            Some(values)
+        } else {
+            None
+        }
+    }
+
+    fn probe(&self, uv: &Vec3) -> Option<f32> {
+        let uv = uv.clamp(Vec3::ZERO, Vec3::ONE - Vec3::splat(1e-6));
+
+        let xyz = Vec3::new(
+            uv.x * self.size.0 as f32,
+            uv.y * self.size.1 as f32,
+            uv.z * self.size.2 as f32,
+        )
+        .as_uvec3();
+
+        let index = (xyz.x + xyz.y * self.size.0 + xyz.z * self.size.0 * self.size.1) as usize;
+
+        self.data.get(index).copied()
+    }
+}
 
 fn downsample_8x(
     input: &[f32],
@@ -197,9 +315,9 @@ fn downsample_8x(
     by: usize,
     bz: usize,
 ) -> Vec<f32> {
-    let new_x = (size_x + bx - 1) / bx;
-    let new_y = (size_y + by - 1) / by;
-    let new_z = (size_z + bz - 1) / bz;
+    let new_x = size_x.div_ceil(bx);
+    let new_y = size_y.div_ceil(by);
+    let new_z = size_z.div_ceil(bz);
 
     let mut output = vec![0.0; new_x * new_y * new_z];
 
@@ -278,27 +396,18 @@ pub fn first_and_last_percent_f32(
     let i2 = (last_percent.clamp(0.0, 100.0) as usize * valid_len) / 100;
 
     let min_val = {
-        let (_, min_val, _) =
-            valid.select_nth_unstable_by(i1, |a, b| {
-                a.total_cmp(&b)
-            });
+        let (_, min_val, _) = valid.select_nth_unstable_by(i1, |a, b| a.total_cmp(b));
         *min_val
     };
     let max_val = {
-        let (_, max_val, _) =
-            valid.select_nth_unstable_by(i2, |a, b| {
-                a.total_cmp(&b)
-            });
+        let (_, max_val, _) = valid.select_nth_unstable_by(i2, |a, b| a.total_cmp(b));
         *max_val
     };
 
     min_val..max_val
 }
 
-
-pub fn estimate_default_cuts_from_variance(
-    slice: &[f32],
-) -> Range<f32> {
+pub fn estimate_default_cuts_from_variance(slice: &[f32]) -> Range<f32> {
     if slice.is_empty() {
         return 0.0..0.0;
     }
@@ -327,17 +436,18 @@ pub fn estimate_default_cuts_from_variance(
         let v = slice[i];
         if !v.is_nan() {
             sum += v;
-            sum2 += v*v;
+            sum2 += v * v;
             n += 1;
         }
     }
 
     let mean = sum / (n as f32);
-    let sigma = ((sum2 / (n as f32)) - mean*mean).sqrt();
+    let sigma = ((sum2 / (n as f32)) - mean * mean).sqrt();
 
     (sigma)..(15.0 * sigma)
 }
 
+/*
 pub fn first_and_last_percent<T>(
     slice: &mut [T],
     mut first_percent: f32,
@@ -354,7 +464,7 @@ where
         std::mem::swap(&mut first_percent, &mut last_percent);
     }
 
-   
+
     let n = slice.len();
     let i1 = (first_percent.clamp(0.0, 100.0) as usize * n) / 100;
     let i2 = (last_percent.clamp(0.0, 100.0) as usize * n) / 100;
@@ -368,3 +478,4 @@ where
 
     min_val..max_val
 }
+*/

@@ -5,6 +5,11 @@ use egui_winit::State;
 use winit::event::WindowEvent;
 use winit::window::Window;
 
+pub mod selector_frame;
+pub mod viewport_frame;
+pub mod isosurface_frame;
+pub mod settings_frame;
+
 pub struct EguiRenderer {
     state: State,
     renderer: Renderer,
@@ -30,7 +35,7 @@ impl EguiRenderer {
             #[cfg(not(target_arch = "wasm32"))]
             Some(window.scale_factor() as f32),
             #[cfg(target_arch = "wasm32")]
-            Some((window.scale_factor() as f32)),
+            Some(window.scale_factor() as f32),
             None,
             Some(2 * 1024), // default dimension is 2048
         );
@@ -43,7 +48,11 @@ impl EguiRenderer {
         }
     }
 
-    pub fn handle_input(&mut self, window: &Window, event: &WindowEvent) -> egui_winit::EventResponse {
+    pub fn handle_input(
+        &mut self,
+        window: &Window,
+        event: &WindowEvent,
+    ) -> egui_winit::EventResponse {
         self.state.on_window_event(window, event)
     }
 
@@ -52,13 +61,13 @@ impl EguiRenderer {
     }
 
     pub fn begin_frame(&mut self, window: &Window) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let raw_input = self.state.take_egui_input(window);
-            self.state.egui_ctx().begin_pass(raw_input);
-        }
+        //#[cfg(not(target_arch = "wasm32"))]
+        //{
+        let raw_input = self.state.take_egui_input(window);
+        self.state.egui_ctx().begin_pass(raw_input);
+        //}
 
-        #[cfg(target_arch = "wasm32")]
+        /*#[cfg(target_arch = "wasm32")]
         {
             let mut raw_input = self.state.take_egui_input(window);
             let scale = 0.75;
@@ -74,8 +83,8 @@ impl EguiRenderer {
             }
 
             self.state.egui_ctx().begin_pass(raw_input);
-        }
-        
+        }*/
+
         self.frame_started = true;
     }
 
@@ -95,7 +104,6 @@ impl EguiRenderer {
         self.ppp(screen_descriptor.pixels_per_point);
 
         let full_output = self.state.egui_ctx().end_pass();
-
         self.state
             .handle_platform_output(window, full_output.platform_output);
 
