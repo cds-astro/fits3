@@ -25,6 +25,10 @@ pub(crate) struct RenderParams {
     pub diffuse_color: [f32; 4],
     pub bg_color: [f32; 3],
     pub transfer: i32,
+    pub custom_colormap1: [f32; 3],
+    pub pad: f32,
+    pub custom_colormap2: [f32; 3],
+    pub pad2: f32,
 }
 
 #[repr(C)]
