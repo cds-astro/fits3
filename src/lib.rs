@@ -173,8 +173,10 @@ struct State {
 
     custom_colormap1: [f32; 3],
     custom_colormap2: [f32; 3],
+    custom_colormap3: [f32; 3],
     pad: f32,
     pad2: f32,
+    pad3: f32,
 
     /// ui options
     show_isosurface: bool,
@@ -320,8 +322,10 @@ impl State {
                 bg_color: [0.0_f32; 3],
                 custom_colormap1: [0.0_f32; 3],
                 custom_colormap2: [0.0_f32; 3],
+                custom_colormap3: [0.0_f32; 3],
                 pad: 0.0_f32,
                 pad2: 0.0_f32,
+                pad3: 0.0_f32,
             })
         );
 
@@ -404,6 +408,7 @@ impl State {
             bg_color: [0.0_f32; 3],
             custom_colormap1: [0.0_f32; 3],
             custom_colormap2: [0.0_f32; 3],
+            custom_colormap3: [0.0_f32; 3],
             show_isosurface: false,
             show_options: false,
             show_unique_slice: false,
@@ -424,6 +429,7 @@ impl State {
 
             pad: 0.0_f32,
             pad2: 0.0_f32,
+            pad3: 0.0_f32,
 
             clock,
             egui_renderer,
@@ -536,6 +542,7 @@ impl State {
                 let mut bg_color = self.bg_color;
                 let mut custom_colormap1 = self.custom_colormap1;
                 let mut custom_colormap2 = self.custom_colormap2;
+                let mut custom_colormap3 = self.custom_colormap3;
                 let mut show_isosurface = self.show_isosurface;
                 let mut show_options = self.show_options;
                 let mut show_unique_slice = self.show_unique_slice;
@@ -618,14 +625,12 @@ impl State {
                 let datamin = self.min_cut_default - data_length;
                 let datamax = self.max_cut_default + 5.0*data_length;
 
-                let mut pad = self.pad;
-                let mut pad2 = self.pad2;
                 
                 let buffers = &self.buffers;
                 let moment0_texture = &mut self.moment0_texture;
                 let naxis = &self.naxis;
                 let mut old_bbox_settings = [ra, dec, fov, f1, f2, ra_min, ra_max, dec_min, dec_max, fov_min, fov_max, fmin, fmax, slice_idx as f32];
-                let mut old_render_params = (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color, bg_color, custom_colormap1, custom_colormap2, pad, pad2);
+                let mut old_render_params = (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color, bg_color, custom_colormap1, custom_colormap2, custom_colormap3);
                 let mut old_scene_settings = (theta, delta, perspective);
                 if show_options {
                     egui::SidePanel::left("fits3 options")
@@ -677,8 +682,12 @@ impl State {
                             ui.color_edit_button_rgb(&mut bg_color);
 
                             ui.label("Create your own colormap");
-                            ui.color_edit_button_rgb(&mut custom_colormap1);
-                            ui.color_edit_button_rgb(&mut custom_colormap2);
+                            ui.horizontal(|ui| {
+                                ui.color_edit_button_rgb(&mut custom_colormap1);
+                                ui.color_edit_button_rgb(&mut custom_colormap2);
+                                ui.color_edit_button_rgb(&mut custom_colormap3);
+                            });
+                            
                         });
                         
                         ui.separator();
@@ -942,7 +951,7 @@ impl State {
                         needs_redraw = true;
                     }
 
-                    if old_render_params != (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color, bg_color, custom_colormap1, custom_colormap2, pad, pad2) {
+                    if old_render_params != (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color, bg_color, custom_colormap1, custom_colormap2, custom_colormap3) {
                         queue.write_buffer(
                             &buffers["render_params"],
                             0,
@@ -954,8 +963,10 @@ impl State {
                                 bg_color,
                                 custom_colormap1,
                                 custom_colormap2,
-                                pad,
-                                pad2,
+                                custom_colormap3,
+                                pad: 0.0_f32,
+                                pad2: 0.0_f32,
+                                pad3: 0.0_f32,
                             }),
                         );
 
@@ -973,6 +984,7 @@ impl State {
                     self.bg_color = bg_color;
                     self.custom_colormap1 = custom_colormap1;
                     self.custom_colormap2 = custom_colormap2;
+                    self.custom_colormap3 = custom_colormap3;
                     self.show_isosurface = show_isosurface;
                     self.show_unique_slice = show_unique_slice;
                     self.colormap = colormap;
