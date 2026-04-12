@@ -35,6 +35,12 @@ uniform RenderParams {
 
     vec3 bg_color;
     int transfer;
+    vec3 custom_colormap1;
+    float pad;
+    vec3 custom_colormap2;
+    float pad2;
+    vec3 custom_colormap3;
+    float pad3;
 };
 
 layout(set = 0, binding = 7)
@@ -178,6 +184,14 @@ vec3 colormap_cubehelix(float t) {
                       (0.031276+t*(-0.925911+t*(49.839030+t*(-323.015906+t*(847.188116+t*(-1048.463499+t*(606.532787+t*-130.108084)))))))), 0.0, 1.0);
 }
 
+vec3 colormap_custom(float t) {
+    t = clamp(t, 0.0, 1.0);
+    return mix(mix(custom_colormap1, custom_colormap2, t),mix(custom_colormap2, custom_colormap3, t),t);
+    //return clamp(vec3((-0.013249+t*(2.275258+t*(-8.817343+t*(-53.364075+t*(404.975951+t*(-860.459961+t*(757.174851+t*-240.797852))))))),
+    //                  (-0.005678+t*(0.984536+t*(-8.239465+t*(106.331710+t*(-417.363212+t*(713.067352+t*(-558.604911+t*164.851278))))))),
+    //                  (0.031276+t*(-0.925911+t*(49.839030+t*(-323.015906+t*(847.188116+t*(-1048.463499+t*(606.532787+t*-130.108084)))))))), 0.0, 1.0);
+}
+
 vec4 colormap(float x) {
     switch(colormap) {
         case 1:
@@ -190,6 +204,8 @@ vec4 colormap(float x) {
             return vec4(colormap_rainbow(x),1.0);
         case 5:
             return vec4(colormap_cubehelix(x),1.0);
+        case 6:
+            return vec4(colormap_custom(x),1.0);
         default:
             float r = clamp(colormap_red(x), 0.0, 1.0);
             float g = clamp(colormap_green(x), 0.0, 1.0);

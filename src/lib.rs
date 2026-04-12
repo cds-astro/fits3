@@ -24,6 +24,7 @@ enum Colormap {
     Plasma,
     Rainbow,
     Cubehelix,
+    Custom,
 }
 
 #[repr(i32)]
@@ -170,6 +171,13 @@ struct State {
     // slice index
     slice_idx: u32,
 
+    custom_colormap1: [f32; 3],
+    custom_colormap2: [f32; 3],
+    custom_colormap3: [f32; 3],
+    pad: f32,
+    pad2: f32,
+    pad3: f32,
+
     /// ui options
     show_isosurface: bool,
     show_options: bool,
@@ -312,6 +320,12 @@ impl State {
                 diffuse_color: [0.0 as f32, 1.0, 0.0, 1.0],
                 transfer: 0,
                 bg_color: [0.0_f32; 3],
+                custom_colormap1: [0.0_f32; 3],
+                custom_colormap2: [0.0_f32; 3],
+                custom_colormap3: [0.0_f32; 3],
+                pad: 0.0_f32,
+                pad2: 0.0_f32,
+                pad3: 0.0_f32,
             })
         );
 
@@ -392,6 +406,9 @@ impl State {
             slice_idx: 0,
             diffuse_color: [0.0, 1.0, 0.0, 1.0],
             bg_color: [0.0_f32; 3],
+            custom_colormap1: [0.0_f32; 3],
+            custom_colormap2: [0.0_f32; 3],
+            custom_colormap3: [0.0_f32; 3],
             show_isosurface: false,
             show_options: false,
             show_unique_slice: false,
@@ -409,6 +426,10 @@ impl State {
 
             colormap: Colormap::Turbo,
             transfer: TransferFunc::Linear,
+
+            pad: 0.0_f32,
+            pad2: 0.0_f32,
+            pad3: 0.0_f32,
 
             clock,
             egui_renderer,
@@ -519,6 +540,9 @@ impl State {
                 let mut perspective = self.perspective;
                 let mut diffuse_color = self.diffuse_color;
                 let mut bg_color = self.bg_color;
+                let mut custom_colormap1 = self.custom_colormap1;
+                let mut custom_colormap2 = self.custom_colormap2;
+                let mut custom_colormap3 = self.custom_colormap3;
                 let mut show_isosurface = self.show_isosurface;
                 let mut show_options = self.show_options;
                 let mut show_unique_slice = self.show_unique_slice;
@@ -600,12 +624,13 @@ impl State {
                 let data_length = (self.max_cut_default - self.min_cut_default).abs();
                 let datamin = self.min_cut_default - data_length;
                 let datamax = self.max_cut_default + 5.0*data_length;
+
                 
                 let buffers = &self.buffers;
                 let moment0_texture = &mut self.moment0_texture;
                 let naxis = &self.naxis;
                 let mut old_bbox_settings = [ra, dec, fov, f1, f2, ra_min, ra_max, dec_min, dec_max, fov_min, fov_max, fmin, fmax, slice_idx as f32];
-                let mut old_render_params = (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color, bg_color);
+                let mut old_render_params = (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color, bg_color, custom_colormap1, custom_colormap2, custom_colormap3);
                 let mut old_scene_settings = (theta, delta, perspective);
                 if show_options {
                     egui::SidePanel::left("fits3 options")
@@ -640,6 +665,7 @@ impl State {
                                     ui.selectable_value(&mut colormap, Colormap::Plasma, "Plasma");
                                     ui.selectable_value(&mut colormap, Colormap::Rainbow, "Rainbow");
                                     ui.selectable_value(&mut colormap, Colormap::Cubehelix, "Cubehelix");
+                                    ui.selectable_value(&mut colormap, Colormap::Custom, "Custom");
                                 });
 
                             egui::ComboBox::from_label("Select a transfer function")
@@ -654,6 +680,14 @@ impl State {
 
                             ui.label("Background color");
                             ui.color_edit_button_rgb(&mut bg_color);
+
+                            ui.label("Create your own colormap");
+                            ui.horizontal(|ui| {
+                                ui.color_edit_button_rgb(&mut custom_colormap1);
+                                ui.color_edit_button_rgb(&mut custom_colormap2);
+                                ui.color_edit_button_rgb(&mut custom_colormap3);
+                            });
+                            
                         });
                         
                         ui.separator();
@@ -917,7 +951,7 @@ impl State {
                         needs_redraw = true;
                     }
 
-                    if old_render_params != (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color, bg_color) {
+                    if old_render_params != (show_isosurface, min_cut, max_cut, isosurface, colormap, transfer, diffuse_color, bg_color, custom_colormap1, custom_colormap2, custom_colormap3) {
                         queue.write_buffer(
                             &buffers["render_params"],
                             0,
@@ -927,6 +961,12 @@ impl State {
                                 diffuse_color,
                                 transfer: transfer as i32,
                                 bg_color,
+                                custom_colormap1,
+                                custom_colormap2,
+                                custom_colormap3,
+                                pad: 0.0_f32,
+                                pad2: 0.0_f32,
+                                pad3: 0.0_f32,
                             }),
                         );
 
@@ -942,6 +982,9 @@ impl State {
                     self.perspective = perspective;
                     self.diffuse_color = diffuse_color;
                     self.bg_color = bg_color;
+                    self.custom_colormap1 = custom_colormap1;
+                    self.custom_colormap2 = custom_colormap2;
+                    self.custom_colormap3 = custom_colormap3;
                     self.show_isosurface = show_isosurface;
                     self.show_unique_slice = show_unique_slice;
                     self.colormap = colormap;
